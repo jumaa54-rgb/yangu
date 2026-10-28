@@ -1,6 +1,8 @@
 const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
-const ADMINS=+process.env.ADMIN_COUNT||5,prod=process.env.NODE_ENV==='production';
+const norm=e=>String(e||'').trim().toLowerCase();
+const ADMIN_EMAILS=new Set((process.env.ADMIN_EMAILS||'').split(',').map(norm).filter(Boolean));
+const prod=process.env.NODE_ENV==='production';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
@@ -8,7 +10,6 @@ const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
 const sign=(res,e)=>res.cookie('t',jwt.sign({e},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
 const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role}),adm=u=>u&&u.role==='admin';
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
-const norm=e=>String(e||'').trim().toLowerCase();
 app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,SECRET).e)||null}catch{req.u=null}next()});
 
 app.post('/api/signup',async(req,res)=>{
@@ -16,10 +17,8 @@ app.post('/api/signup',async(req,res)=>{
  if(!name||!/^\S+@\S+\.\S+$/.test(e)||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid email, phone, 6+ character password).'});
  const c=await pool.connect();
  try{await c.query('begin');
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:'seller',created:Date.now()}]);
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
   if(!ins.rowCount){await c.query('rollback');return res.status(409).json({error:'This email already has an account. Please log in.'})}
-  const n=(await c.query("insert into docs values('meta','signups','{\"n\":1}') on conflict(coll,id) do update set data=jsonb_build_object('n',(docs.data->>'n')::int+1) returning (data->>'n')::int n")).rows[0].n;
-  if(n<=ADMINS)await c.query("update docs set data=data||'{\"role\":\"admin\"}' where coll='users' and id=$1",[hex(e)]);
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);

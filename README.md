@@ -4,16 +4,9 @@ Yangu is an online marketplace for local sellers and buyers.
 
 ## Deploy on Render
 
-1. Create a Render PostgreSQL database and copy its **Internal Database URL**.
-2. Create a Render Web Service from this repository. Set the build command to `npm install` and the start command to `npm start`.
-3. Configure these environment variables:
-   - `DATABASE_URL`: the PostgreSQL Internal Database URL.
-   - `JWT_SECRET`: a long, randomly generated secret.
-   - `NODE_ENV`: `production`.
-   - `ADMIN_COUNT`: `5` (optional; this is the default).
-4. Before sharing the site publicly, create the first five accounts. Those accounts receive administrator access; subsequent accounts are sellers or buyers.
+This repository includes a Render Blueprint in `render.yaml`. In the Render Dashboard, create a **Blueprint Instance** for this repository and select the `jumaa54-rgb-yangu-deployment` branch to deploy the preview. Render will create the web service and PostgreSQL database together. During setup, enter the comma-separated `ADMIN_EMAILS` addresses that should receive administrator access; Render generates `JWT_SECRET` automatically.
 
-Render provides the `PORT` environment variable automatically. To use a custom domain, add it in the Render service settings and configure the DNS records shown there.
+The Blueprint uses Render's free plans. The web service may spin down when idle, and the free PostgreSQL database expires after 30 days; use paid plans for persistent production hosting. Render provides the `PORT` environment variable automatically. The `onrender.com` address appears in the web service dashboard after its first successful deploy. To use a custom domain, add it in the service settings and configure the DNS records shown there.
 
 ## Run locally
 
