@@ -2,6 +2,8 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Yangu Market Stores – Bidhaa kwa bei yangu</title>
+<meta name="description" content="Discover products from local sellers across Kenya. Compare prices and connect directly on Yangu Market Stores.">
+<meta name="theme-color" content="#17643e">
 <style>
 :root{--bg:#faf7f0;--card:#fff;--tx:#1d2b22;--mu:#66736b;--pr:#1b7a43;--ac:#f08a1c;--bd:#e4dfd2;--er:#c0392b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#121a15;--card:#1b261f;--tx:#eef3ee;--mu:#9fb0a5;--pr:#3fc079;--bd:#2c3b31}}
@@ -35,14 +37,54 @@ input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--bd);b
 .otp-digits{margin:6px 0}.otp-entry{max-width:260px;letter-spacing:.35em;font-size:22px;font-weight:700;text-align:center}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px;border-bottom:1px solid var(--bd);text-align:left}.sc{overflow-x:auto}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}.tabs .on{background:var(--pr);color:#fff}
+:root{--bg:#f4f6f4;--card:#fff;--tx:#17241e;--mu:#65736b;--pr:#17643e;--ac:#c18a32;--bd:#dfe6e1;--er:#b42318;color-scheme:light}
+body{font-family:Inter,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.55}
+header{padding:12px clamp(16px,4vw,48px);box-shadow:0 2px 12px #17241e0a}
+.logo b{font-size:17px;letter-spacing:-.02em}.logo i{color:#8b6422;font-size:11px;letter-spacing:.04em}
+nav{gap:7px}
+button,.btn{border-color:var(--bd);border-radius:8px;padding:9px 14px;font-weight:600;transition:background-color .16s ease,border-color .16s ease,transform .16s ease,box-shadow .16s ease}
+button:hover,.btn:hover{border-color:#aab8af;background:#f7faf8}
+button.p,.btn.p{background:var(--pr);border-color:var(--pr)}
+button.p:hover,.btn.p:hover{background:#104c2f;border-color:#104c2f;box-shadow:0 4px 12px #17643e25}
+button.a{background:#8b6422;border-color:#8b6422}
+button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #c18a3270;outline-offset:2px}
+.profile-link{background:transparent;border-color:transparent}
+.profile-link:hover{background:#f4f6f4;border-color:var(--bd)}
+main{max-width:1180px;padding:clamp(16px,3vw,32px)}
+#bn{background:#8b6422}
+.hero{position:relative;overflow:hidden;background:linear-gradient(115deg,#123d2c 0%,#17643e 65%,#287750 100%);border-radius:18px;padding:clamp(26px,5vw,52px);margin-bottom:24px;box-shadow:0 12px 30px #123d2c18}
+.hero:after{content:"";position:absolute;width:260px;height:260px;border:1px solid #ffffff20;border-radius:50%;right:-65px;top:-115px;box-shadow:0 0 0 32px #ffffff08,0 0 0 64px #ffffff06;pointer-events:none}
+.hero .eyebrow{display:inline-block;margin-bottom:12px;color:#f2d49b;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.hero h1{max-width:700px;margin:0 0 10px;font-size:clamp(30px,5vw,46px);line-height:1.12;letter-spacing:-.035em}
+.hero p{max-width:630px;color:#e3eee7;font-size:16px;line-height:1.7}
+.bar{gap:10px;margin-bottom:18px;padding:12px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 4px 16px #17241e08}
+.bar input,.bar select{min-height:44px}
+.bar input{min-width:220px}
+.grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,235px),1fr));gap:18px}
+.grid .card{padding:12px;border-radius:12px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.grid .card:hover{transform:translateY(-3px);border-color:#c4d2c9;box-shadow:0 10px 24px #17241e12}
+.card .em{height:184px;display:grid;place-items:center;overflow:hidden;background:#f1f4f1;border-radius:8px;padding:0}
+.em img{height:100%;object-fit:cover}
+.grid .card h3{margin:12px 2px 3px;font-size:16px;line-height:1.4}
+.grid .card .pr,.grid .card .mu{margin-left:2px;margin-right:2px}
+.pr{color:#17643e}
+.box{border-radius:12px;border-color:var(--bd);box-shadow:0 3px 12px #17241e06}
+input,select,textarea{border-radius:8px}
+.tabs .on{background:var(--pr);border-color:var(--pr)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#111a15;--card:#18231c;--tx:#edf3ee;--mu:#a2b1a7;--pr:#368a5d;--ac:#c18a32;--bd:#2b3a30}
+ .logo i{color:#e2bf7e}.bar{box-shadow:none}.bar input,.bar select{background:var(--card)}button:hover,.btn:hover,.profile-link:hover{background:#223329}.grid .card:hover{border-color:#42624d;box-shadow:0 10px 24px #0004}.card .em{background:#202d24}}
+@media(max-width:640px){header{align-items:flex-start}.logo svg{width:38px;height:38px}nav{width:100%;gap:6px}nav button{padding:8px 10px}.profile-link{margin-right:auto}.hero{border-radius:14px}.bar{padding:10px}.bar input{min-width:100%;flex-basis:100%}.bar select{flex:1;min-width:0}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:30;padding:10px 14px;background:var(--card);color:var(--tx);border:2px solid var(--pr);border-radius:8px}.skip-link:focus{top:12px}
 </style></head><body>
+<a href="#app" class="skip-link">Skip to marketplace</a>
 <div id="bn" hidden></div>
 <header>
  <button class="logo" data-act="home" aria-label="Yangu Market Stores home">
   <svg width="46" height="46" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#1b7a43"/><path d="M16 24h32l-3 26a4 4 0 0 1-4 3H23a4 4 0 0 1-4-3z" fill="#fff"/><path d="M24 24v-4a8 8 0 0 1 16 0v4" fill="none" stroke="#f08a1c" stroke-width="4" stroke-linecap="round"/><path d="M25 31l7 9 7-9M32 40v8" fill="none" stroke="#1b7a43" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <span><b>Yangu Market Stores</b><i>Bidhaa kwa bei yangu</i></span>
  </button>
- <nav id="nav"></nav>
+ <nav id="nav" aria-label="Main navigation"></nav>
 </header>
 <main id="app"><p class="mu">Loading…</p></main>
 <div id="md"><div id="mb"></div></div>
@@ -96,8 +138,8 @@ function render(){
  if(view==='mine')list=products.filter(p=>me&&p.email===me.email);
  list=list.filter(p=>(!cat||p.cat===cat)&&(!sub||p.sub===sub)&&(!q||(p.title+' '+p.desc).toLowerCase().includes(q.toLowerCase())));
  list=[...list].sort(({new:(a,b)=>b.created-a.created,old:(a,b)=>a.created-b.created,low:(a,b)=>a.price-b.price,high:(a,b)=>b.price-a.price,az:(a,b)=>String(a.title).localeCompare(String(b.title))})[sortBy]);
- A.innerHTML=(view==='home'?`<div class="hero"><h1>Bidhaa kwa bei yangu</h1><p>Buy and sell directly. Find what you need or list what you have.</p></div>`:'<h2>My items</h2>')+
- `<div class="bar"><input id="sq" placeholder="Search products…" value="${esc(q)}"><select id="sc"><option value="">All categories</option>${cfg.cats.map(c=>`<option ${c===cat?'selected':''}>${esc(c)}</option>`).join('')}</select>${cat&&(cfg.subs?.[cat]||[]).length?`<select id="ss" aria-label="Subcategory"><option value="">All ${esc(cat)}</option>${cfg.subs[cat].map(s=>`<option ${s===sub?'selected':''}>${esc(s)}</option>`).join('')}</select>`:''}<select id="so" aria-label="Sort products">${[['new','Newest first'],['old','Oldest first'],['low','Price: low to high'],['high','Price: high to low'],['az','Name: A to Z']].map(([v,l])=>`<option value="${v}" ${v===sortBy?'selected':''}>${l}</option>`).join('')}</select></div>`+
+ A.innerHTML=(view==='home'?`<section class="hero"><span class="eyebrow">Yangu Market Stores · Kenya</span><h1>Local shopping, made simple.</h1><p>Discover products from local sellers, compare prices, and connect directly. A practical marketplace for everyday needs.</p></section>`:'<h2>My items</h2>')+
+ `<div class="bar" role="search"><input id="sq" aria-label="Search products" placeholder="Search products by name or description" value="${esc(q)}"><select id="sc" aria-label="Filter by category"><option value="">All categories</option>${cfg.cats.map(c=>`<option ${c===cat?'selected':''}>${esc(c)}</option>`).join('')}</select>${cat&&(cfg.subs?.[cat]||[]).length?`<select id="ss" aria-label="Subcategory"><option value="">All ${esc(cat)}</option>${cfg.subs[cat].map(s=>`<option ${s===sub?'selected':''}>${esc(s)}</option>`).join('')}</select>`:''}<select id="so" aria-label="Sort products">${[['new','Newest first'],['old','Oldest first'],['low','Price: low to high'],['high','Price: high to low'],['az','Name: A to Z']].map(([v,l])=>`<option value="${v}" ${v===sortBy?'selected':''}>${l}</option>`).join('')}</select></div>`+
  (list.length?`<div class="grid">${list.map(p=>`<div class="card" data-act="open" data-id="${p.id}"><div class="em">${pic(p)}</div><h3>${esc(p.title)}</h3><div class="pr">KSh ${Number(p.price).toLocaleString()}</div><div class="mu">${esc(p.cat)}${p.sub?' › '+esc(p.sub):''} · ${esc(p.sname)}</div></div>`).join('')}</div>`:'<div class="box mu">Nothing here yet. Log in and tap “+ Sell” to list the first product.</div>')+social();
  const s=$('#sq');if(s&&document.activeElement===document.body&&q){s.focus();s.setSelectionRange(q.length,q.length)}
 }
