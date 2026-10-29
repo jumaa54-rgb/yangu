@@ -1,8 +1,10 @@
-const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto');
+const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
 const norm=e=>String(e||'').trim().toLowerCase();
 const ADMIN_EMAILS=new Set((process.env.ADMIN_EMAILS||'').split(',').map(norm).filter(Boolean));
 const prod=process.env.NODE_ENV==='production';
+const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
+const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
@@ -10,15 +12,61 @@ const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
 const sign=(res,e)=>res.cookie('t',jwt.sign({e},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
 const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role}),adm=u=>u&&u.role==='admin';
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
+const otpHash=code=>crypto.createHmac('sha256',SECRET).update(code).digest('hex');
 app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,SECRET).e)||null}catch{req.u=null}next()});
 
+app.post('/api/signup/send-code',async(req,res)=>{
+ const e=norm(req.body.email);
+ if(!/^\S+@\S+\.\S+$/.test(e))return res.status(400).json({error:'Enter a valid email address.'});
+ if(await getUser(e))return res.status(409).json({error:'This email already has an account. Please log in.'});
+ if(!mail)return res.status(503).json({error:'Email verification is not configured. Contact the site administrator.'});
+ const code=String(crypto.randomInt(0,1000000)).padStart(6,'0'),c=await pool.connect();
+ try{
+  await c.query('begin');
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
+  if((await c.query("select 1 from docs where coll='users' and id=$1",[hex(e)])).rowCount){
+   await c.query('rollback');return res.status(409).json({error:'This email already has an account. Please log in.'});
+  }
+  const prev=(await c.query('select sent_at from signup_otps where email=$1',[e])).rows[0];
+  if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
+   await c.query('rollback');return res.status(429).json({error:'Please wait a minute before requesting another code.'});
+  }
+  await mail.sendMail({from:SMTP_FROM,to:e,subject:'Your Yangu verification code',text:`Your Yangu verification code is ${code}. It expires in 10 minutes.`});
+  await c.query(`insert into signup_otps(email,code_hash,expires_at,sent_at,attempts)
+   values($1,$2,now()+interval '10 minutes',now(),0)
+   on conflict(email) do update set code_hash=excluded.code_hash,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
+   [e,otpHash(code)]);
+  await c.query('commit');res.json({ok:true});
+ }catch(x){await c.query('rollback');console.error(x);res.status(503).json({error:'Could not send a verification code. Check the email address or try again later.'})}
+ finally{c.release()}});
+
 app.post('/api/signup',async(req,res)=>{
- const{name,email,phone,password,q:qn,qa}=req.body,e=norm(email);
+ const{name,email,phone,password,q:qn,qa,otp}=req.body,e=norm(email);
  if(!name||!/^\S+@\S+\.\S+$/.test(e)||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid email, phone, 6+ character password).'});
+ if(!/^\d{6}$/.test(String(otp||'')))return res.status(400).json({error:'Enter the six-digit verification code sent to your email.'});
  const c=await pool.connect();
- try{await c.query('begin');
+ try{
+  await c.query('begin');
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
+  const verification=(await c.query('select code_hash,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
+  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
+   await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
+   return res.status(400).json({error:'Your verification code has expired. Request a new one.'});
+  }
+  if(verification.attempts>=5){
+   await c.query('commit');
+   return res.status(429).json({error:'Too many incorrect codes. Request a new verification code.'});
+  }
+  const supplied=Buffer.from(otpHash(String(otp)),'hex'),expected=Buffer.from(verification.code_hash,'hex');
+  if(!crypto.timingSafeEqual(supplied,expected)){
+   const attempts=verification.attempts+1;
+   await c.query('update signup_otps set attempts=$1 where email=$2',[attempts,e]);
+   await c.query('commit');
+   return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
+  }
   const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
-  if(!ins.rowCount){await c.query('rollback');return res.status(409).json({error:'This email already has an account. Please log in.'})}
+  if(!ins.rowCount){await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
+  await c.query('delete from signup_otps where email=$1',[e]);
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
@@ -56,5 +104,5 @@ app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u||!req.file||
 app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from files where id=$1',[req.params.id.replace(/\W/g,'')])).rows[0];
  if(!r)return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
-q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea)')
+q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
  .then(()=>app.listen(process.env.PORT||3000,()=>console.log('Yangu Market Stores running')));
