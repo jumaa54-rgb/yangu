@@ -12,7 +12,7 @@ Email verification requires SMTP credentials. Configure `SMTP_HOST`, `SMTP_PORT`
 
 After signing in, users can select their profile photo or initials beside their name to open the full profile. From there they can add a photo, update their display name and recovery phone, or change their recovery email after verifying a code sent to it. The sign-up email and primary phone are displayed as permanent account details and cannot be changed. Saving profile changes requires the current password.
 
-When creating or editing a product, sellers can optionally choose **Use my current location** to attach a one-time location pin. The browser asks for location permission; the exact pin is visible to anyone viewing that listing and can be removed before saving. Yangu does not track location in the background. Buyers can open a shared pin in Google Maps.
+When creating or editing a product, sellers can enter a general area, town, street, or nearby landmark instead of sharing a precise pin. They can also optionally choose **Use my current location** to attach a one-time pin. Any location provided is visible to anyone viewing the listing; the browser asks for permission before capturing a pin, and Yangu does not track location in the background. Buyers can open a shared pin in Google Maps.
 
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 
