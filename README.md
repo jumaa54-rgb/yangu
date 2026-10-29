@@ -14,6 +14,8 @@ After signing in, users can select their profile photo or initials beside their 
 
 When creating or editing a product, sellers can enter a general area, town, street, or nearby landmark instead of sharing a precise pin. They can also optionally choose **Use my current location** to attach a one-time pin. Any location provided is visible to anyone viewing the listing; the browser asks for permission before capturing a pin, and Yangu does not track location in the background. Buyers can open a shared pin in Google Maps.
 
+Buyers can choose **Find goods near me** and select a 10, 25, 50, or 100 km radius. Yangu requests the buyer's location only after they tap the button, calculates distances in their browser, and keeps that location in page memory only. Nearby matching requires a seller's map pin; text-only locations cannot be measured by distance.
+
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 
 ## Run locally

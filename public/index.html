@@ -60,6 +60,9 @@ main{max-width:1180px;padding:clamp(16px,3vw,32px)}
 .bar{gap:10px;margin-bottom:18px;padding:12px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 4px 16px #17241e08}
 .bar input,.bar select{min-height:44px}
 .bar input{min-width:220px}
+.nearby-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%}
+.nearby-controls .nearby-status{flex:1 1 100%;min-height:1em}
+.nearby-controls select{width:auto;min-width:120px}
 .grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,235px),1fr));gap:18px}
 .grid .card{padding:12px;border-radius:12px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
 .grid .card:hover{transform:translateY(-3px);border-color:#c4d2c9;box-shadow:0 10px 24px #17241e12}
@@ -105,13 +108,14 @@ const hex=e=>[...new TextEncoder().encode(e)].map(b=>b.toString(16).padStart(2,'
 const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const val=id=>($('#'+id)?.value||'').trim(),setErr=t=>{const e=$('#er');if(e)e.textContent=t};
 const QS=['What is your mother’s first name?','What was your first school?','What is your favourite food?','What town were you born in?'];
-let db,user,me=null,profile=null,profileLoadError='',profileEmailPending=false,recoveryEmailTarget='',admin=false,products=[],users=[],sortBy='new',formImgs=[],listingLocation=null,locationCapture=0,comments=[],view='home',cur=null,tab='users',q='',cat='',sub='',
+let db,user,me=null,profile=null,profileLoadError='',profileEmailPending=false,recoveryEmailTarget='',admin=false,products=[],users=[],sortBy='new',formImgs=[],listingLocation=null,locationCapture=0,buyerLocation=null,buyerLocationMessage='',nearRadius=25,nearbyRequest=0,comments=[],view='home',cur=null,tab='users',q='',cat='',sub='',
  cfg={banner:'',cats:['Electronics','Fashion','Home','Food','Farm','Services','Other'],subs:{Electronics:['Phones','Laptops','TVs & Audio','Accessories'],Fashion:['Men','Women','Kids','Shoes'],Home:['Furniture','Kitchen','Decor','Appliances'],Food:['Fresh produce','Packaged food','Drinks','Bakery'],Farm:['Crops','Livestock','Tools & inputs'],Services:['Delivery','Repairs','Cleaning','Other services'],Other:[]}};
 const base=()=>location.href.split('#')[0],U=()=>db.collection('users'),P=()=>db.collection('products');
 const canEdit=p=>admin||(me&&me.email===p.email);
 const validListingLocation=l=>l&&Number.isFinite(Number(l.lat))&&Number(l.lat)>=-90&&Number(l.lat)<=90&&Number.isFinite(Number(l.lng))&&Number(l.lng)>=-180&&Number(l.lng)<=180;
 const locationLabel=l=>validListingLocation(l)?`${Number(l.lat).toFixed(5)}, ${Number(l.lng).toFixed(5)}`:'No pin added';
 const listingLocationText=p=>String(p?.locationText||'').trim();
+const distanceKm=(a,b)=>{const rad=n=>Number(n)*Math.PI/180,dLat=rad(b.lat-a.lat),dLng=rad(b.lng-a.lng),x=Math.min(1,Math.max(0,Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLng/2)**2));return 6371*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))};
 const pic=p=>p.imgId?`<img src="/_blob/${esc(p.imgId)}" alt="${esc(p.title)}">`:esc(p.em||'🛍️');
 const shrink=f=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=Math.min(1,900/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*s;c.height=i.height*s;c.getContext('2d').drawImage(i,0,0,c.width,c.height);c.toBlob(b=>b?ok(b):no(),'image/jpeg',.82)};i.onerror=no;i.src=URL.createObjectURL(f)});
 const SOC=['facebook','instagram','tiktok','whatsapp','x','youtube'];
@@ -149,11 +153,13 @@ function render(){
   `<div class="box"><label>Site announcement banner (empty to remove)</label><input id="cb" value="${esc(cfg.banner)}"><label style="margin-top:10px;display:block">Categories (comma separated)</label><input id="cc" value="${esc(cfg.cats.join(', '))}"><label style="display:block;margin-top:10px">Subcategories (one line per category, like “Electronics: Phones, Laptops”)</label><textarea id="cs" rows="7">${esc(cfg.cats.map(c=>c+': '+(cfg.subs?.[c]||[]).join(', ')).join('\n'))}</textarea><p class="mu" style="margin:14px 0 0">Social media links (full https:// addresses; empty to remove)</p>${SOC.map(k=>`<label>${k}</label><input id="s_${k}" value="${esc(cfg.soc?.[k])}">`).join('')}<div class="row"><button class="p" data-act="savecfg">Save settings</button></div></div>`);return}
  let list=products;
  if(view==='mine')list=products.filter(p=>me&&p.email===me.email);
+ if(buyerLocation)list=list.filter(p=>validListingLocation(p.location)&&distanceKm(buyerLocation,p.location)<=nearRadius);
  list=list.filter(p=>(!cat||p.cat===cat)&&(!sub||p.sub===sub)&&(!q||(p.title+' '+p.desc).toLowerCase().includes(q.toLowerCase())));
- list=[...list].sort(({new:(a,b)=>b.created-a.created,old:(a,b)=>a.created-b.created,low:(a,b)=>a.price-b.price,high:(a,b)=>b.price-a.price,az:(a,b)=>String(a.title).localeCompare(String(b.title))})[sortBy]);
+ list=[...list].sort((a,b)=>buyerLocation?distanceKm(buyerLocation,a.location)-distanceKm(buyerLocation,b.location):0);
+ if(!buyerLocation)list=[...list].sort(({new:(a,b)=>b.created-a.created,old:(a,b)=>a.created-b.created,low:(a,b)=>a.price-b.price,high:(a,b)=>b.price-a.price,az:(a,b)=>String(a.title).localeCompare(String(b.title))})[sortBy]);
  A.innerHTML=(view==='home'?`<section class="hero"><span class="eyebrow">Yangu Market Stores · Kenya</span><h1>Local shopping, made simple.</h1><p>Discover products from local sellers, compare prices, and connect directly. A practical marketplace for everyday needs.</p></section>`:'<h2>My items</h2>')+
- `<div class="bar" role="search"><input id="sq" aria-label="Search products" placeholder="Search products by name or description" value="${esc(q)}"><select id="sc" aria-label="Filter by category"><option value="">All categories</option>${cfg.cats.map(c=>`<option ${c===cat?'selected':''}>${esc(c)}</option>`).join('')}</select>${cat&&(cfg.subs?.[cat]||[]).length?`<select id="ss" aria-label="Subcategory"><option value="">All ${esc(cat)}</option>${cfg.subs[cat].map(s=>`<option ${s===sub?'selected':''}>${esc(s)}</option>`).join('')}</select>`:''}<select id="so" aria-label="Sort products">${[['new','Newest first'],['old','Oldest first'],['low','Price: low to high'],['high','Price: high to low'],['az','Name: A to Z']].map(([v,l])=>`<option value="${v}" ${v===sortBy?'selected':''}>${l}</option>`).join('')}</select></div>`+
- (list.length?`<div class="grid">${list.map(p=>`<div class="card" data-act="open" data-id="${p.id}"><div class="em">${pic(p)}</div><h3>${esc(p.title)}</h3><div class="pr">KSh ${Number(p.price).toLocaleString()}</div><div class="mu">${esc(p.cat)}${p.sub?' › '+esc(p.sub):''} · ${esc(p.sname)}</div></div>`).join('')}</div>`:'<div class="box mu">Nothing here yet. Log in and tap “+ Sell” to list the first product.</div>')+social();
+ `<div class="bar" role="search"><input id="sq" aria-label="Search products" placeholder="Search products by name or description" value="${esc(q)}"><select id="sc" aria-label="Filter by category"><option value="">All categories</option>${cfg.cats.map(c=>`<option ${c===cat?'selected':''}>${esc(c)}</option>`).join('')}</select>${cat&&(cfg.subs?.[cat]||[]).length?`<select id="ss" aria-label="Subcategory"><option value="">All ${esc(cat)}</option>${cfg.subs[cat].map(s=>`<option ${s===sub?'selected':''}>${esc(s)}</option>`).join('')}</select>`:''}<select id="so" aria-label="Sort products">${[['new','Newest first'],['old','Oldest first'],['low','Price: low to high'],['high','Price: high to low'],['az','Name: A to Z']].map(([v,l])=>`<option value="${v}" ${v===sortBy?'selected':''}>${l}</option>`).join('')}</select><div class="nearby-controls"><button type="button" class="${buyerLocation?'p':''}" data-act="findNearby" ${buyerLocation?'':'title="Use your location once to find nearby listings"'}>${buyerLocation?'Showing nearby':'Find goods near me'}</button>${buyerLocation?`<label class="mu" for="nearRadius">Within</label><select id="nearRadius" aria-label="Search radius">${[10,25,50,100].map(r=>`<option value="${r}" ${r===nearRadius?'selected':''}>${r} km</option>`).join('')}</select><button type="button" data-act="clearNearby">Clear</button>`:''}<span class="mu nearby-status" aria-live="polite">${esc(buyerLocationMessage||(buyerLocation?'Using your location once. Only listings with a seller map pin can be matched; your location is not saved.':''))}</span></div></div>`+
+ (list.length?`<div class="grid">${list.map(p=>`<div class="card" data-act="open" data-id="${p.id}"><div class="em">${pic(p)}</div><h3>${esc(p.title)}</h3><div class="pr">KSh ${Number(p.price).toLocaleString()}</div><div class="mu">${esc(p.cat)}${p.sub?' › '+esc(p.sub):''} · ${esc(p.sname)}${buyerLocation?` · ${distanceKm(buyerLocation,p.location).toFixed(1)} km away`:''}</div></div>`).join('')}</div>`:buyerLocation?`<div class="box mu">No pinned listings found within ${nearRadius} km. Try a wider distance or browse all goods. Text-only seller locations can’t be matched by distance.</div>`:'<div class="box mu">Nothing here yet. Log in and tap “+ Sell” to list the first product.</div>')+social();
  const s=$('#sq');if(s&&document.activeElement===document.body&&q){s.focus();s.setSelectionRange(q.length,q.length)}
 }
 const authForm=m=>modal(m==='login'?`<h3>Log in</h3><label>Email</label><input id="e" type="email"><label>Password</label><input id="pw" type="password"><div class="er" id="er"></div><div class="row"><button class="p" data-act="dologin">Log in</button><button data-act="forgot">Forgot password?</button><button data-act="signup">Create account</button></div>`:
@@ -178,6 +184,28 @@ const showZ=()=>{modal(`<div style="text-align:center"><img src="/_blob/${esc(zI
 const A={
  home(){view='home';q='';cat='';sub='';render()},close:closeM,login:()=>authForm('login'),signup:()=>authForm('signup'),
  toggleMenu(t){const m=$('#serviceMenu'),open=m.hidden;m.hidden=!open;t.setAttribute('aria-expanded',String(open))},
+ findNearby(t){
+  if(!navigator.geolocation){buyerLocationMessage='Location is not supported by this browser.';render();return}
+  const request=++nearbyRequest;
+  t.disabled=true;t.textContent='Finding nearby goods…';
+  buyerLocationMessage='Allow location access to find pinned listings within your chosen distance.';
+  try{
+   navigator.geolocation.getCurrentPosition(pos=>{
+    if(request!==nearbyRequest)return;
+    buyerLocation={lat:pos.coords.latitude,lng:pos.coords.longitude};
+    buyerLocationMessage='Your location is used only on this device and is not saved. Only sellers who added a map pin can appear in nearby results.';
+    if(view==='home'||view==='mine')render();
+   },err=>{
+    if(request!==nearbyRequest)return;
+    buyerLocation=null;
+    buyerLocationMessage=err.code===1?'Location permission was denied. Allow location access in your browser settings and try again.':err.code===2?'Your location is unavailable. Try again or move to an area with a stronger signal.':'Could not get your location in time. Check your connection and try again.';
+    if(view==='home'||view==='mine')render();
+   },{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+  }catch{
+   if(request===nearbyRequest){buyerLocationMessage='Could not request your location. Please try again.';render()}
+  }
+ },
+ clearNearby(){nearbyRequest++;buyerLocation=null;buyerLocationMessage='';render()},
  captureListingLocation(){
   const status=$('#listingLocationStatus'),save=$('#saveProduct'),request=++locationCapture;
   const finish=()=>{if(request===locationCapture&&save)save.disabled=false};
@@ -256,7 +284,7 @@ const closeServiceMenu=()=>{const m=$('#serviceMenu'),b=$('[aria-controls="servi
 document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(t&&A[t.dataset.act])A[t.dataset.act](t);if(!t||t.dataset.act!=='toggleMenu')closeServiceMenu();if(e.target.id==='md')closeM()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){const b=$('[aria-controls="serviceMenu"]');if(b&&!$('#serviceMenu').hidden){closeServiceMenu();b.focus()}}});
 document.addEventListener('input',e=>{if(e.target.id==='sq'){q=e.target.value;render()}});
-document.addEventListener('change',e=>{if(e.target.id==='profilePhoto'&&e.target.files?.[0])A.uploadProfilePhoto(e.target.files[0]);if(e.target.id==='sc'){cat=e.target.value;sub='';render()}if(e.target.id==='ss'){sub=e.target.value;render()}if(e.target.id==='c')fillSub('');if(e.target.id==='so'){sortBy=e.target.value;render()}if(e.target.dataset.cat)P().doc(e.target.dataset.cat).update({cat:e.target.value,sub:''}).catch(()=>alert('Could not change category'))});
+document.addEventListener('change',e=>{if(e.target.id==='profilePhoto'&&e.target.files?.[0])A.uploadProfilePhoto(e.target.files[0]);if(e.target.id==='sc'){cat=e.target.value;sub='';render()}if(e.target.id==='ss'){sub=e.target.value;render()}if(e.target.id==='c')fillSub('');if(e.target.id==='so'){sortBy=e.target.value;render()}if(e.target.id==='nearRadius'){nearRadius=Number(e.target.value)||25;render()}if(e.target.dataset.cat)P().doc(e.target.dataset.cat).update({cat:e.target.value,sub:''}).catch(()=>alert('Could not change category'))});
 const route=()=>{const h=location.hash;if(h.startsWith('#p-')){cur=h.slice(3);view='detail';render()}};
 addEventListener('hashchange',route);
 (async()=>{
