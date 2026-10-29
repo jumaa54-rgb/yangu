@@ -31,7 +31,7 @@ input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--bd);b
 #md.on{display:flex}#mb{background:var(--card);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:90vh;overflow:auto}
 #mb label{display:block;font-size:13px;color:var(--mu);margin:10px 0 3px}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .er{color:var(--er);font-size:14px;min-height:18px;margin-top:8px}
-.otp-digits{display:flex;gap:8px;margin:6px 0}.otp-digits input{width:44px;height:50px;text-align:center;font-size:22px;font-weight:700;padding:4px}
+.otp-digits{margin:6px 0}.otp-entry{max-width:260px;letter-spacing:.35em;font-size:22px;font-weight:700;text-align:center}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px;border-bottom:1px solid var(--bd);text-align:left}.sc{overflow-x:auto}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}.tabs .on{background:var(--pr);color:#fff}
 </style></head><body>
@@ -68,7 +68,7 @@ async function copy(t){try{await navigator.clipboard.writeText(t);alert('Link co
 function render(){
  $('#bn').textContent=cfg.banner||'';$('#bn').hidden=!cfg.banner;
  $('#nav').innerHTML=(me?`${profile?.avatarId?`<img src="/_blob/${esc(profile.avatarId)}" alt="" style="width:32px;height:32px;object-fit:cover;border-radius:50%">`:''}<span class="mu">Hi, ${esc(me.name)}</span><button data-act="profile">Profile</button><button class="p" data-act="addp">+ Sell</button><button data-act="mine">My items</button>`:`<button data-act="login">Log in</button><button class="p" data-act="signup">Sign up</button>`)
-  +(admin?'<button class="a" data-act="admin">Admin</button>':'')+'<button data-act="fb">💬 Feedback</button><button data-act="ai">✨ Ask AI</button><button data-act="share">Share site</button>'+(me?'<button data-act="logout">Log out</button>':'');
+  +(admin?'<button class="a" data-act="admin">Admin</button>':'')+'<button data-act="fb">💬 Feedback</button><button data-act="ai">✨ Ask AI</button><button data-act="help">Help</button><button data-act="share">Share site</button>'+(me?'<button data-act="logout">Log out</button>':'');
  const A=$('#app');
  if(!db){A.innerHTML='<div class="box">Live data is unavailable. Please open this site while signed in to Claude.</div>';return}
  if(view==='profile'){
@@ -101,7 +101,7 @@ function render(){
  const s=$('#sq');if(s&&document.activeElement===document.body&&q){s.focus();s.setSelectionRange(q.length,q.length)}
 }
 const authForm=m=>modal(m==='login'?`<h3>Log in</h3><label>Email</label><input id="e" type="email"><label>Password</label><input id="pw" type="password"><div class="er" id="er"></div><div class="row"><button class="p" data-act="dologin">Log in</button><button data-act="forgot">Forgot password?</button><button data-act="signup">Create account</button></div>`:
- `<h3>Create account</h3><p class="mu">We’ll email a six-digit verification code before creating your account.</p><label>Full name</label><input id="n"><label>Email (one account per email)</label><input id="e" type="email"><label>Phone (permanent account number)</label><input id="ph" placeholder="07xx xxx xxx"><label>Password (min 6)</label><input id="pw" type="password"><label>Recovery question</label><select id="q">${QS.map(x=>`<option>${esc(x)}</option>`).join('')}</select><label>Answer</label><input id="qa"><div class="er" id="er"></div><div class="row"><button class="p" data-act="dosignup">Sign up</button><button data-act="login">I have an account</button></div>`);
+ `<h3>Create account</h3><p class="mu">We’ll email a six-digit code. Enter it on the next step, or tap the link in the email to verify automatically.</p><label>Full name</label><input id="n"><label>Email (one account per email)</label><input id="e" type="email"><label>Phone (permanent account number)</label><input id="ph" placeholder="07xx xxx xxx"><label>Password (min 6)</label><input id="pw" type="password"><label>Recovery question</label><select id="q">${QS.map(x=>`<option>${esc(x)}</option>`).join('')}</select><label>Answer</label><input id="qa"><div class="er" id="er"></div><div class="row"><button class="p" data-act="dosignup">Sign up</button><button data-act="login">I have an account</button></div><div class="mu" style="margin-top:10px">Need help? Select <b>Help</b> beside Ask AI.</div>`);
 const fillSub=cur=>{const s=$('#sb');if(!s)return;const l=cfg.subs?.[val('c')]||[];s.innerHTML='<option value="">None</option>'+[...new Set([...l,...(cur?[cur]:[])])].map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join('')};
 const ids=p=>p?(p.imgIds||(p.imgId?[p.imgId]:[])):[];
 const thumbs=()=>{const t=$('#ths');if(t)t.innerHTML=formImgs.map(i=>`<span style="position:relative;display:inline-block;margin:4px"><img src="/_blob/${esc(i)}" width="60" height="60" style="object-fit:cover;border-radius:8px" alt=""><button data-act="rmimg" data-id="${esc(i)}" style="position:absolute;top:-6px;right:-6px;padding:0 7px;border-radius:50%">×</button></span>`).join('')};
@@ -150,7 +150,7 @@ const A={
  async postc(){const text=val('ft');if(text.length<5)return setErr('Please write a little more.');
   try{await db.collection('comments').doc('c'+Date.now().toString(36)).set({name:me.name,email:me.email,role:val('fr'),stars:Number(val('fs')),text:text.slice(0,500),created:Date.now()});$('#ft').value=''}catch(x){setErr('Could not post. Try again.')}},
  async delc(t){if(admin&&confirm('Remove this comment?'))try{await db.collection('comments').doc(t.dataset.id).delete()}catch(x){alert('Failed')}},
- ai:()=>modal(`<h3>✨ AI shopping assistant</h3><p class="mu">Tell me what you need and your budget.</p><textarea id="aq" rows="3" placeholder="e.g. a phone under KSh 15,000"></textarea><div class="row"><button class="p" data-act="aisend">Find products</button><button data-act="close">Close</button></div><div id="ao" style="margin-top:12px"></div>`),
+ ai:()=>modal(`<h3>✨ AI shopping assistant</h3><p class="mu">Tell me what you need and your budget.</p><textarea id="aq" rows="3" placeholder="e.g. a phone under KSh 15,000"></textarea><div class="row"><button class="p" data-act="aisend">Find products</button><button data-act="close">Close</button><button data-act="help">Contact help</button></div><div id="ao" style="margin-top:12px"></div>`),
  async aisend(){const m=val('aq');if(!m)return;const o=$('#ao');o.innerHTML='<span class="mu">Thinking…</span>';
   try{const s=await claude.use('sample');if(!s){o.textContent='AI is not available right now.';return}
    const list=products.slice(0,60).map(p=>({id:p.id,title:p.title,price:p.price,cat:p.cat,desc:(p.desc||'').slice(0,120)}));
