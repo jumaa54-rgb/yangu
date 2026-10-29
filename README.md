@@ -10,6 +10,8 @@ The Blueprint uses Render's free plans. The web service may spin down when idle,
 
 Email verification requires SMTP credentials. Configure `SMTP_HOST`, `SMTP_PORT` (usually `587`, or `465` for implicit TLS), `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the Render service environment before enabling signups. The app emails a six-digit code that expires after 10 minutes; codes are single-use and limited to five guesses. SMTP settings can also be added to the environment for local development.
 
+After signing in, users can open **Profile** to add a photo, update their display name and recovery phone, or change their recovery email after verifying a code sent to it. The sign-up email and primary phone are displayed as permanent account details and cannot be changed. Saving profile changes requires the current password.
+
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 
 ## Run locally

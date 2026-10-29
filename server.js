@@ -18,14 +18,14 @@ app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,S
 app.post('/api/signup/send-code',async(req,res)=>{
  const e=norm(req.body.email);
  if(!/^\S+@\S+\.\S+$/.test(e))return res.status(400).json({error:'Enter a valid email address.'});
- if(await getUser(e))return res.status(409).json({error:'This email already has an account. Please log in.'});
+ if((await q("select 1 from docs where coll='users' and (lower(data->>'email')=$1 or lower(data->>'recoveryEmail')=$1) limit 1",[e])).rowCount)return res.status(409).json({error:'This email is already in use by an account.'});
  if(!mail)return res.status(503).json({error:'Email verification is not configured. Contact the site administrator.'});
  const code=String(crypto.randomInt(0,1000000)).padStart(6,'0'),c=await pool.connect();
  try{
   await c.query('begin');
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
-  if((await c.query("select 1 from docs where coll='users' and id=$1",[hex(e)])).rowCount){
-   await c.query('rollback');return res.status(409).json({error:'This email already has an account. Please log in.'});
+  if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
+   await c.query('rollback');return res.status(409).json({error:'This email is already in use by an account.'});
   }
   const prev=(await c.query('select sent_at from signup_otps where email=$1',[e])).rows[0];
   if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
@@ -64,7 +64,11 @@ app.post('/api/signup',async(req,res)=>{
    await c.query('commit');
    return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
   }
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
+  if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
+   await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
+   return res.status(409).json({error:'This email is already in use by an account.'});
+  }
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:true,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
   if(!ins.rowCount){await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
   await c.query('delete from signup_otps where email=$1',[e]);
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
@@ -75,6 +79,94 @@ app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getU
  sign(res,e);res.json(pub(u))});
 app.post('/api/logout',(req,res)=>{res.clearCookie('t');res.json({ok:1})});
 app.get('/api/me',(req,res)=>res.json(req.u?pub(req.u):null));
+const profileOf=u=>({name:u.name,email:u.email,emailVerified:u.emailVerified===true,phone:u.phone,recoveryEmail:u.recoveryEmail||'',recoveryPhone:u.recoveryPhone||'',avatarId:u.avatarId||''});
+app.get('/api/profile',(req,res)=>req.u?res.json(profileOf(req.u)):res.sendStatus(401));
+app.post('/api/profile/update',async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ const name=String(req.body.name||'').trim(),phone=String(req.body.recoveryPhone||'').trim();
+ if(!name||name.length>80||(phone&&phone.replace(/\D/g,'').length<9)||phone.length>30)return res.status(400).json({error:'Enter a name and a valid recovery phone number, or leave the recovery phone blank.'});
+ if(!await bcrypt.compare(String(req.body.password||''),req.u.hash))return res.status(401).json({error:'Your current password is incorrect.'});
+ await q("update docs set data=data||$1 where coll='users' and id=$2",[{name,recoveryPhone:phone},hex(req.u.email)]);
+ res.json(profileOf(await getUser(req.u.email)));
+});
+app.post('/api/profile/recovery-email/send-code',async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ const e=norm(req.body.email);
+ if(!/^\S+@\S+\.\S+$/.test(e)||e===req.u.email)return res.status(400).json({error:'Enter a different, valid recovery email address.'});
+ if(!await bcrypt.compare(String(req.body.password||''),req.u.hash))return res.status(401).json({error:'Your current password is incorrect.'});
+ if(!mail)return res.status(503).json({error:'Email verification is not configured. Contact the site administrator.'});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[hex(req.u.email)]);
+  if((await c.query("select 1 from docs where coll='users' and (lower(data->>'email')=$1 or lower(data->>'recoveryEmail')=$1) limit 1",[e])).rowCount){
+   await c.query('rollback');return res.status(409).json({error:'That email is already in use by an account.'});
+  }
+  const prev=(await c.query('select sent_at from profile_email_otps where account_id=$1',[hex(req.u.email)])).rows[0];
+  if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
+   await c.query('rollback');return res.status(429).json({error:'Please wait a minute before requesting another code.'});
+  }
+  const code=String(crypto.randomInt(0,1000000)).padStart(6,'0');
+  await mail.sendMail({from:SMTP_FROM,to:e,subject:'Your Yangu recovery email verification code',text:`Your Yangu recovery email verification code is ${code}. It expires in 10 minutes.`});
+  await c.query(`insert into profile_email_otps(account_id,target_email,code_hash,expires_at,sent_at,attempts)
+   values($1,$2,$3,now()+interval '10 minutes',now(),0)
+   on conflict(account_id) do update set target_email=excluded.target_email,code_hash=excluded.code_hash,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
+   [hex(req.u.email),e,otpHash(code)]);
+  await c.query('commit');res.json({ok:true});
+ }catch(x){await c.query('rollback');console.error(x);res.status(503).json({error:'Could not send a verification code. Check the email address or try again later.'})}
+ finally{c.release()}});
+app.post('/api/profile/recovery-email/verify',async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ const e=norm(req.body.email),otp=String(req.body.otp||''),accountId=hex(req.u.email);
+ if(!/^\S+@\S+\.\S+$/.test(e)||e===req.u.email||!/^\d{6}$/.test(otp))return res.status(400).json({error:'Enter the recovery email and its six-digit verification code.'});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
+  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[accountId]);
+  const verification=(await c.query('select target_email,code_hash,expires_at,attempts from profile_email_otps where account_id=$1 for update',[accountId])).rows[0];
+  if(!verification||verification.target_email!==e||new Date(verification.expires_at).getTime()<=Date.now()){
+   await c.query('delete from profile_email_otps where account_id=$1',[accountId]);await c.query('commit');
+   return res.status(400).json({error:'Your verification code expired or the email changed. Request a new code.'});
+  }
+  if(verification.attempts>=5){await c.query('commit');return res.status(429).json({error:'Too many incorrect codes. Request a new verification code.'})}
+  const supplied=Buffer.from(otpHash(otp),'hex'),expected=Buffer.from(verification.code_hash,'hex');
+  if(!crypto.timingSafeEqual(supplied,expected)){
+   const attempts=verification.attempts+1;
+   await c.query('update profile_email_otps set attempts=$1 where account_id=$2',[attempts,accountId]);await c.query('commit');
+   return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
+  }
+  if((await c.query("select 1 from docs where coll='users' and (lower(data->>'email')=$1 or lower(data->>'recoveryEmail')=$1) limit 1",[e])).rowCount){
+   await c.query('delete from profile_email_otps where account_id=$1',[accountId]);await c.query('commit');
+   return res.status(409).json({error:'That email is already in use by an account.'});
+  }
+  await c.query("update docs set data=data||$1 where coll='users' and id=$2",[{recoveryEmail:e},accountId]);
+  await c.query('delete from profile_email_otps where account_id=$1',[accountId]);
+  await c.query('commit');res.json(profileOf(await getUser(req.u.email)));
+ }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Could not update recovery email.'})}
+ finally{c.release()}});
+app.post('/api/profile/recovery-email/remove',async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ if(!await bcrypt.compare(String(req.body.password||''),req.u.hash))return res.status(401).json({error:'Your current password is incorrect.'});
+ await q("update docs set data=data-'recoveryEmail' where coll='users' and id=$1",[hex(req.u.email)]);
+ await q('delete from profile_email_otps where account_id=$1',[hex(req.u.email)]);
+ res.json(profileOf(await getUser(req.u.email)));
+});
+app.post('/api/profile/photo',up.single('file'),async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ if(!req.file||!['image/jpeg','image/png','image/webp','image/gif'].includes(req.file.mimetype))return res.status(400).json({error:'Choose a JPEG, PNG, WebP or GIF image.'});
+ const id=crypto.randomBytes(16).toString('hex');
+ await q('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);
+ await q("update docs set data=data||$1 where coll='users' and id=$2",[{avatarId:id},hex(req.u.email)]);
+ res.json({avatarId:id});
+});
+app.delete('/api/profile/photo',async(req,res)=>{
+ if(!req.u)return res.sendStatus(401);
+ const user=await getUser(req.u.email),id=user.avatarId;
+ if(id){await q("update docs set data=data-'avatarId' where coll='users' and id=$1",[hex(req.u.email)]);await q('delete from files where id=$1',[id])}
+ res.json({ok:true});
+});
 app.post('/api/forgot',async(req,res)=>{const u=await getUser(norm(req.body.email));if(!u)return res.status(404).json({error:'No account with that email.'});res.json({q:u.q})});
 app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e),pw=String(req.body.password||'');
  if(!u||pw.length<6)return res.status(400).json({error:'Password must be 6+ characters.'});
@@ -83,7 +175,7 @@ app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getU
 app.post('/api/admin/reset',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);const e=norm(req.body.email),temp='Yangu'+crypto.randomInt(1000,10000);
  await q("update docs set data=data||$1 where coll='users' and id=$2",[{hash:await bcrypt.hash(temp,10)},hex(e)]);res.json({temp})});
 
-const COLL=['products','comments','site','users'],strip=({hash,qah,...r})=>r;
+const COLL=['products','comments','site','users'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r;
 app.use('/api/c/:c',(req,res,next)=>COLL.includes(req.params.c)?next():res.sendStatus(404));
 app.get('/api/c/:c',async(req,res)=>{const c=req.params.c;if(c==='users'&&!adm(req.u))return res.sendStatus(403);
  res.json((await q('select id,data from docs where coll=$1',[c])).rows.map(r=>({id:r.id,data:c==='users'?strip(r.data):r.data})))});
@@ -105,4 +197,5 @@ app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from fi
  if(!r)return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
 q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
+ .then(()=>q('create table if not exists profile_email_otps(account_id text primary key,target_email text not null,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)'))
  .then(()=>app.listen(process.env.PORT||3000,()=>console.log('Yangu Market Stores running')));
