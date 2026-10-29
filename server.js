@@ -5,6 +5,7 @@ const ADMIN_EMAILS=new Set((process.env.ADMIN_EMAILS||'').split(',').map(norm).f
 const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
 const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
+const PUBLIC_URL=process.env.PUBLIC_URL||process.env.RENDER_EXTERNAL_URL||'http://localhost:3000';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
@@ -31,38 +32,71 @@ app.post('/api/signup/send-code',async(req,res)=>{
   if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
    await c.query('rollback');return res.status(429).json({error:'Please wait a minute before requesting another code.'});
   }
-  await mail.sendMail({from:SMTP_FROM,to:e,subject:'Your Yangu verification code',text:`Your Yangu verification code is ${code}. It expires in 10 minutes.`});
-  await c.query(`insert into signup_otps(email,code_hash,expires_at,sent_at,attempts)
-   values($1,$2,now()+interval '10 minutes',now(),0)
-   on conflict(email) do update set code_hash=excluded.code_hash,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
-   [e,otpHash(code)]);
+  const linkToken=crypto.randomBytes(32).toString('base64url'),verifyUrl=new URL('/',PUBLIC_URL);
+  verifyUrl.hash=new URLSearchParams({verify:linkToken}).toString();
+  await mail.sendMail({
+   from:SMTP_FROM,to:e,subject:'Verify your Yangu email address',
+   text:`Your Yangu verification code is ${code}. It expires in 10 minutes.\n\nOr verify your email and continue signing up by opening this link:\n${verifyUrl}`,
+   html:`<p>Your Yangu verification code is <strong>${code}</strong>. It expires in 10 minutes.</p><p>Or <a href="${verifyUrl}">verify your email and continue signing up</a>.</p>`
+  });
+  await c.query(`insert into signup_otps(email,code_hash,link_token_hash,verified_at,expires_at,sent_at,attempts)
+   values($1,$2,$3,null,now()+interval '10 minutes',now(),0)
+   on conflict(email) do update set code_hash=excluded.code_hash,link_token_hash=excluded.link_token_hash,verified_at=null,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
+   [e,otpHash(code),otpHash(linkToken)]);
   await c.query('commit');res.json({ok:true});
  }catch(x){await c.query('rollback');console.error(x);res.status(503).json({error:'Could not send a verification code. Check the email address or try again later.'})}
  finally{c.release()}});
 
+app.post('/api/signup/verify-link',async(req,res)=>{
+ const token=String(req.body.token||'');
+ if(!/^[A-Za-z0-9_-]{40,50}$/.test(token))return res.status(400).json({error:'This verification link is invalid or expired. Request a new code.'});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  const verification=(await c.query('select email,expires_at from signup_otps where link_token_hash=$1 for update',[otpHash(token)])).rows[0];
+  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
+   await c.query('rollback');return res.status(400).json({error:'This verification link is invalid or expired. Request a new code.'});
+  }
+  if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(verification.email),verification.email])).rowCount){
+   await c.query('delete from signup_otps where email=$1',[verification.email]);await c.query('commit');
+   return res.status(409).json({error:'This email is already in use by an account.'});
+  }
+  await c.query('update signup_otps set verified_at=now() where email=$1',[verification.email]);
+  await c.query('commit');res.json({ok:true,email:verification.email});
+ }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Could not verify the email link.'})}
+ finally{c.release()}});
+
 app.post('/api/signup',async(req,res)=>{
- const{name,email,phone,password,q:qn,qa,otp}=req.body,e=norm(email);
+ const{name,email,phone,password,q:qn,qa,otp,verificationToken}=req.body,e=norm(email);
  if(!name||!/^\S+@\S+\.\S+$/.test(e)||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid email, phone, 6+ character password).'});
- if(!/^\d{6}$/.test(String(otp||'')))return res.status(400).json({error:'Enter the six-digit verification code sent to your email.'});
+ const viaLink=typeof verificationToken==='string'&&verificationToken.length>=40;
+ if(!viaLink&&!/^\d{6}$/.test(String(otp||'')))return res.status(400).json({error:'Enter the six-digit verification code sent to your email.'});
  const c=await pool.connect();
  try{
   await c.query('begin');
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
-  const verification=(await c.query('select code_hash,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
+  const verification=(await c.query('select code_hash,link_token_hash,verified_at,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
   if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
    await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
    return res.status(400).json({error:'Your verification code has expired. Request a new one.'});
   }
-  if(verification.attempts>=5){
+  if(!viaLink&&verification.attempts>=5){
    await c.query('commit');
    return res.status(429).json({error:'Too many incorrect codes. Request a new verification code.'});
   }
-  const supplied=Buffer.from(otpHash(String(otp)),'hex'),expected=Buffer.from(verification.code_hash,'hex');
-  if(!crypto.timingSafeEqual(supplied,expected)){
-   const attempts=verification.attempts+1;
-   await c.query('update signup_otps set attempts=$1 where email=$2',[attempts,e]);
-   await c.query('commit');
-   return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
+  if(viaLink){
+   const supplied=Buffer.from(otpHash(verificationToken),'hex'),expected=Buffer.from(verification.link_token_hash||'','hex');
+   if(!verification.verified_at||expected.length!==supplied.length||!crypto.timingSafeEqual(supplied,expected)){
+    await c.query('commit');return res.status(401).json({error:'Open the email verification link before creating your account.'});
+   }
+  }else{
+   const supplied=Buffer.from(otpHash(String(otp)),'hex'),expected=Buffer.from(verification.code_hash,'hex');
+   if(!crypto.timingSafeEqual(supplied,expected)){
+    const attempts=verification.attempts+1;
+    await c.query('update signup_otps set attempts=$1 where email=$2',[attempts,e]);
+    await c.query('commit');
+    return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
+   }
   }
   if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
    await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
@@ -209,5 +243,6 @@ app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from fi
  if(!r)return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
 q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
+ .then(()=>q('alter table signup_otps add column if not exists link_token_hash text, add column if not exists verified_at timestamptz'))
  .then(()=>q('create table if not exists profile_email_otps(account_id text primary key,target_email text not null,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)'))
  .then(()=>app.listen(process.env.PORT||3000,()=>console.log('Yangu Market Stores running')));
