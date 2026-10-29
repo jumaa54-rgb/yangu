@@ -10,7 +10,7 @@ The Blueprint uses Render's free plans. The web service may spin down when idle,
 
 Email verification requires SMTP credentials. Configure `SMTP_HOST`, `SMTP_PORT` (usually `587`, or `465` for implicit TLS), `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the Render service environment before enabling signups. Signup emails contain a six-digit code for a single-field, autofill-friendly entry or a verification link that confirms the address and returns the user to finish signup. Codes and links expire after 10 minutes; codes are single-use and limited to five guesses. Render's `RENDER_EXTERNAL_URL` is used for email links; for local development, set `PUBLIC_URL` to the local app origin. The **Help** button beside **Ask AI** shows the first administrator's email and phone for signup and verification issues.
 
-After signing in, users can open **Profile** to add a photo, update their display name and recovery phone, or change their recovery email after verifying a code sent to it. The sign-up email and primary phone are displayed as permanent account details and cannot be changed. Saving profile changes requires the current password.
+After signing in, users can select their profile photo or initials beside their name to open the full profile. From there they can add a photo, update their display name and recovery phone, or change their recovery email after verifying a code sent to it. The sign-up email and primary phone are displayed as permanent account details and cannot be changed. Saving profile changes requires the current password.
 
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 

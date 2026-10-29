@@ -46,7 +46,7 @@ A.fstep=async()=>{const r=await J('/api/forgot',{email:val('e')});if(!r.ok)retur
 A.fdone=async()=>{const r=await J('/api/reset',{email:val('e'),qa:val('qa'),password:$('#pw').value});if(!r.ok)return setErr(r.d.error||'Try again.');
  modal('<h3>Password updated \u2713</h3><div class="row"><button class="p" data-act="login">Log in</button></div>')};
 A.resetu=async t=>{const u=users.find(x=>x.id===t.dataset.id),r=await J('/api/admin/reset',{email:u.email});alert(r.ok?'Temporary password for '+u.email+': '+r.d.temp:'Failed')};
-A.profile=async()=>{view='profile';profile=null;profileLoadError='';render();try{const r=await fetch('/api/profile'),d=await r.json();if(!r.ok)throw new Error(d.error||'Could not load profile.');profile=d;recoveryEmailTarget=d.recoveryEmail||'';render()}catch(x){profileLoadError=x.message||'Could not load profile.';render()}};
+A.profile=async()=>{view='profile';profile=null;profileLoadError='';render();try{const r=await fetch('/api/profile'),d=await r.json();if(!r.ok)throw new Error(d.error||'Could not load profile.');profile=d;me={...me,avatarId:d.avatarId};recoveryEmailTarget=d.recoveryEmail||'';render()}catch(x){profileLoadError=x.message||'Could not load profile.';render()}};
 A.saveProfile=async()=>{
  let r;try{r=await J('/api/profile/update',{name:val('profileName'),recoveryPhone:val('recoveryPhone'),password:$('#profilePassword').value})}catch{const m=$('#profileMessage');if(m)m.textContent='Could not save profile. Please try again.';return}
  if(!r.ok){const m=$('#profileMessage');if(m)m.textContent=r.d.error||'Could not save profile.';return}
@@ -81,16 +81,16 @@ A.uploadProfilePhoto=async file=>{
   const form=new FormData();form.append('file',image,'profile.jpg');
   const r=await fetch('/api/profile/photo',{method:'POST',body:form}),d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.error||'Could not upload profile photo.');
-  profile.avatarId=d.avatarId;render();
+  profile.avatarId=d.avatarId;me={...me,avatarId:d.avatarId};render();
  }catch(x){if(m)m.textContent=x.message||'Could not upload profile photo.'}
 };
 A.removeProfilePhoto=async()=>{
  let r,d;try{r=await fetch('/api/profile/photo',{method:'DELETE'});d=await r.json().catch(()=>({}))}catch{const m=$('#profileMessage');if(m)m.textContent='Could not remove profile photo. Please try again.';return}
  if(!r.ok){const m=$('#profileMessage');if(m)m.textContent=d.error||'Could not remove profile photo.';return}
- profile.avatarId='';render();
+ profile.avatarId='';me={...me,avatarId:''};render();
 };
 {const o=A.logout;A.logout=()=>{J('/api/logout');profile=null;profileEmailPending=false;recoveryEmailTarget='';o()}}
-fetch('/api/me').then(r=>r.json()).then(u=>{if(u){me={email:u.email,name:u.name,phone:u.phone};render()}}).catch(()=>{});
+fetch('/api/me').then(r=>r.json()).then(u=>{if(u){me={email:u.email,name:u.name,phone:u.phone,avatarId:u.avatarId||''};render()}}).catch(()=>{});
 document.addEventListener('input',e=>{
  const input=e.target.closest('[data-otp-group]');if(!input)return;
  input.value=input.value.replace(/\D/g,'').slice(0,6);
