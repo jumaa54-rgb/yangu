@@ -13,6 +13,7 @@ header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:s
 nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 button,.btn{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 14px;border-radius:10px;cursor:pointer;text-decoration:none;display:inline-block}
 button.p,.btn.p{background:var(--pr);border-color:var(--pr);color:#fff}button.a{background:var(--ac);border-color:var(--ac);color:#fff}button.d{color:var(--er);border-color:var(--er)}
+.profile-link{display:inline-flex;align-items:center;gap:8px;padding:4px 10px 4px 4px}.profile-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--pr);color:#fff;font-weight:700}.profile-link span.profile-avatar{display:grid;place-items:center}
 main{max-width:1000px;margin:0 auto;padding:16px}
 #bn{background:var(--ac);color:#fff;text-align:center;padding:8px 12px;font-weight:600}
 .hero{background:linear-gradient(135deg,var(--pr),#0f5530);color:#fff;border-radius:16px;padding:22px;margin-bottom:16px}
@@ -67,7 +68,7 @@ async function copy(t){try{await navigator.clipboard.writeText(t);alert('Link co
 
 function render(){
  $('#bn').textContent=cfg.banner||'';$('#bn').hidden=!cfg.banner;
- $('#nav').innerHTML=(me?`${profile?.avatarId?`<img src="/_blob/${esc(profile.avatarId)}" alt="" style="width:32px;height:32px;object-fit:cover;border-radius:50%">`:''}<span class="mu">Hi, ${esc(me.name)}</span><button data-act="profile">Profile</button><button class="p" data-act="addp">+ Sell</button><button data-act="mine">My items</button>`:`<button data-act="login">Log in</button><button class="p" data-act="signup">Sign up</button>`)
+ $('#nav').innerHTML=(me?`<button class="profile-link" data-act="profile" aria-label="Open your profile" title="Open your profile">${me.avatarId?`<img class="profile-avatar" src="/_blob/${esc(me.avatarId)}" alt="">`:`<span class="profile-avatar" aria-hidden="true">${esc((me.name||'?').trim().slice(0,1).toUpperCase())}</span>`}<span>${esc(me.name)}</span></button><button class="p" data-act="addp">+ Sell</button><button data-act="mine">My items</button>`:`<button data-act="login">Log in</button><button class="p" data-act="signup">Sign up</button>`)
   +(admin?'<button class="a" data-act="admin">Admin</button>':'')+'<button data-act="fb">💬 Feedback</button><button data-act="ai">✨ Ask AI</button><button data-act="help">Help</button><button data-act="share">Share site</button>'+(me?'<button data-act="logout">Log out</button>':'');
  const A=$('#app');
  if(!db){A.innerHTML='<div class="box">Live data is unavailable. Please open this site while signed in to Claude.</div>';return}

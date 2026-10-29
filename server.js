@@ -11,7 +11,7 @@ const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
 const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
 const sign=(res,e)=>res.cookie('t',jwt.sign({e},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
-const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role}),adm=u=>u&&u.role==='admin';
+const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role,avatarId:u.avatarId||''}),adm=u=>u&&u.role==='admin';
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
 const otpHash=code=>crypto.createHmac('sha256',SECRET).update(code).digest('hex');
 app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,SECRET).e)||null}catch{req.u=null}next()});
