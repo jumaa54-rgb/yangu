@@ -76,6 +76,14 @@ input,select,textarea{border-radius:8px}
 @media(max-width:640px){header{align-items:flex-start}.logo svg{width:38px;height:38px}nav{width:100%;gap:6px}nav button{padding:8px 10px}.profile-link{margin-right:auto}.hero{border-radius:14px}.bar{padding:10px}.bar input{min-width:100%;flex-basis:100%}.bar select{flex:1;min-width:0}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
 .skip-link{position:absolute;left:12px;top:-60px;z-index:30;padding:10px 14px;background:var(--card);color:var(--tx);border:2px solid var(--pr);border-radius:8px}.skip-link:focus{top:12px}
+.menu-wrap{position:relative;margin-left:auto}
+.menu-button{display:inline-flex;align-items:center;gap:8px}
+.service-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:12;display:grid;gap:4px;width:min(270px,calc(100vw - 32px));padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 12px 32px #17241e20}
+.service-menu[hidden]{display:none}
+.service-menu button{width:100%;text-align:left;background:transparent;border-color:transparent}
+.service-menu button:hover{background:#f4f6f4;border-color:var(--bd)}
+.service-menu .menu-label{padding:5px 10px 7px;color:var(--mu);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .service-menu button:hover{background:#223329}}
 </style></head><body>
 <a href="#app" class="skip-link">Skip to marketplace</a>
 <div id="bn" hidden></div>
@@ -111,7 +119,7 @@ async function copy(t){try{await navigator.clipboard.writeText(t);alert('Link co
 function render(){
  $('#bn').textContent=cfg.banner||'';$('#bn').hidden=!cfg.banner;
  $('#nav').innerHTML=(me?`<button class="profile-link" data-act="profile" aria-label="Open your profile" title="Open your profile">${me.avatarId?`<img class="profile-avatar" src="/_blob/${esc(me.avatarId)}" alt="">`:`<span class="profile-avatar" aria-hidden="true">${esc((me.name||'?').trim().slice(0,1).toUpperCase())}</span>`}<span>${esc(me.name)}</span></button><button class="p" data-act="addp">+ Sell</button><button data-act="mine">My items</button>`:`<button data-act="login">Log in</button><button class="p" data-act="signup">Sign up</button>`)
-  +(admin?'<button class="a" data-act="admin">Admin</button>':'')+'<button data-act="fb">💬 Feedback</button><button data-act="ai">✨ Ask AI</button><button data-act="help">Help</button><button data-act="share">Share site</button>'+(me?'<button data-act="logout">Log out</button>':'');
+  +'<div class="menu-wrap"><button type="button" class="menu-button" data-act="toggleMenu" aria-expanded="false" aria-controls="serviceMenu"><span aria-hidden="true">☰</span> Menu</button><div class="service-menu" id="serviceMenu" hidden><span class="menu-label">Services</span><button data-act="fb">Buyer &amp; seller feedback</button><button data-act="ai">AI shopping assistant</button><button data-act="help">Help &amp; support</button><button data-act="share">Share Yangu</button>'+(admin?'<button data-act="admin">Admin panel</button>':'')+(me?'<button data-act="logout">Log out</button>':'')+'</div></div>';
  const A=$('#app');
  if(!db){A.innerHTML='<div class="box">Live data is unavailable. Please open this site while signed in to Claude.</div>';return}
  if(view==='profile'){
@@ -154,6 +162,7 @@ let zIds=[],zI=0;
 const showZ=()=>{modal(`<div style="text-align:center"><img src="/_blob/${esc(zIds[zI])}" style="max-width:100%;max-height:70vh;object-fit:contain" alt=""><div class="row" style="justify-content:center;align-items:center">${zIds.length>1?`<button data-act="zprev">‹</button><span class="mu">${zI+1} / ${zIds.length}</span><button data-act="znext">›</button>`:''}<button data-act="close">Close</button></div></div>`);$('#mb').style.maxWidth='900px'};
 const A={
  home(){view='home';q='';cat='';sub='';render()},close:closeM,login:()=>authForm('login'),signup:()=>authForm('signup'),
+ toggleMenu(t){const m=$('#serviceMenu'),open=m.hidden;m.hidden=!open;t.setAttribute('aria-expanded',String(open))},
  open(t){cur=t.dataset.id;view='detail';render();scrollTo(0,0)},mine(){view='mine';render()},admin(){view='admin';render()},tab(t){tab=t.dataset.id;render()},
  share:()=>copy(base()),sharep:t=>copy(base()+'#p-'+t.dataset.id),logout(){setMe(null);view='home';render()},
  addp:()=>prodForm(),editp(t){prodForm(products.find(p=>p.id===t.dataset.id))},
@@ -207,7 +216,9 @@ const A={
    $('#d').value=r.text.trim()}catch(x){setErr('AI could not write right now. Try again.')}finally{t.disabled=false;t.textContent='✨ Write with AI'}},
  async savecfg(){try{await db.doc('site/config').set({banner:val('cb'),cats:val('cc').split(',').map(s=>s.trim()).filter(Boolean),subs:Object.fromEntries(val('cs').split('\n').map(l=>l.split(':')).filter(a=>a.length>=2&&a[0].trim()).map(a=>[a[0].trim(),a.slice(1).join(':').split(',').map(s=>s.trim()).filter(Boolean)])),soc:Object.fromEntries(SOC.map(k=>[k,val('s_'+k)]).filter(([k,v])=>v.startsWith('https://')))});alert('Saved')}catch(x){alert('Failed')}}
 };
-document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(t&&A[t.dataset.act])A[t.dataset.act](t);else if(e.target.id==='md')closeM()});
+const closeServiceMenu=()=>{const m=$('#serviceMenu'),b=$('[aria-controls="serviceMenu"]');if(m)m.hidden=true;if(b)b.setAttribute('aria-expanded','false')};
+document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(t&&A[t.dataset.act])A[t.dataset.act](t);if(!t||t.dataset.act!=='toggleMenu')closeServiceMenu();if(e.target.id==='md')closeM()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const b=$('[aria-controls="serviceMenu"]');if(b&&!$('#serviceMenu').hidden){closeServiceMenu();b.focus()}}});
 document.addEventListener('input',e=>{if(e.target.id==='sq'){q=e.target.value;render()}});
 document.addEventListener('change',e=>{if(e.target.id==='profilePhoto'&&e.target.files?.[0])A.uploadProfilePhoto(e.target.files[0]);if(e.target.id==='sc'){cat=e.target.value;sub='';render()}if(e.target.id==='ss'){sub=e.target.value;render()}if(e.target.id==='c')fillSub('');if(e.target.id==='so'){sortBy=e.target.value;render()}if(e.target.dataset.cat)P().doc(e.target.dataset.cat).update({cat:e.target.value,sub:''}).catch(()=>alert('Could not change category'))});
 const route=()=>{const h=location.hash;if(h.startsWith('#p-')){cur=h.slice(3);view='detail';render()}};
