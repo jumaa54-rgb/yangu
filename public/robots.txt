@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yangu-market-stores.onrender.com/sitemap.xml
