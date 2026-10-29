@@ -157,15 +157,27 @@ app.post('/api/profile/photo',up.single('file'),async(req,res)=>{
  if(!req.u)return res.sendStatus(401);
  if(!req.file||!['image/jpeg','image/png','image/webp','image/gif'].includes(req.file.mimetype))return res.status(400).json({error:'Choose a JPEG, PNG, WebP or GIF image.'});
  const id=crypto.randomBytes(16).toString('hex');
- await q('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);
- await q("update docs set data=data||$1 where coll='users' and id=$2",[{avatarId:id},hex(req.u.email)]);
- res.json({avatarId:id});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  const account=(await c.query("select data from docs where coll='users' and id=$1 for update",[hex(req.u.email)])).rows[0];
+  if(!account){await c.query('rollback');return res.sendStatus(401)}
+  await c.query('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);
+  await c.query("update docs set data=data||$1 where coll='users' and id=$2",[{avatarId:id},hex(req.u.email)]);
+  if(account.data.avatarId)await c.query('delete from files where id=$1',[account.data.avatarId]);
+  await c.query('commit');res.json({avatarId:id});
+ }catch(x){await c.query('rollback');throw x}finally{c.release()}
 });
 app.delete('/api/profile/photo',async(req,res)=>{
  if(!req.u)return res.sendStatus(401);
- const user=await getUser(req.u.email),id=user.avatarId;
- if(id){await q("update docs set data=data-'avatarId' where coll='users' and id=$1",[hex(req.u.email)]);await q('delete from files where id=$1',[id])}
- res.json({ok:true});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  const account=(await c.query("select data from docs where coll='users' and id=$1 for update",[hex(req.u.email)])).rows[0];
+  if(!account){await c.query('rollback');return res.sendStatus(401)}
+  if(account.data.avatarId){await c.query("update docs set data=data-'avatarId' where coll='users' and id=$1",[hex(req.u.email)]);await c.query('delete from files where id=$1',[account.data.avatarId])}
+  await c.query('commit');res.json({ok:true});
+ }catch(x){await c.query('rollback');throw x}finally{c.release()}
 });
 app.post('/api/forgot',async(req,res)=>{const u=await getUser(norm(req.body.email));if(!u)return res.status(404).json({error:'No account with that email.'});res.json({q:u.q})});
 app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e),pw=String(req.body.password||'');
