@@ -84,6 +84,8 @@ input,select,textarea{border-radius:8px}
 .service-menu button:hover{background:#f4f6f4;border-color:var(--bd)}
 .service-menu .menu-label{padding:5px 10px 7px;color:var(--mu);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .service-menu button:hover{background:#223329}}
+.listing-location{padding:12px;background:var(--bg);border:1px solid var(--bd);border-radius:8px}
+.listing-location .row{align-items:center}
 </style></head><body>
 <a href="#app" class="skip-link">Skip to marketplace</a>
 <div id="bn" hidden></div>
@@ -103,10 +105,12 @@ const hex=e=>[...new TextEncoder().encode(e)].map(b=>b.toString(16).padStart(2,'
 const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const val=id=>($('#'+id)?.value||'').trim(),setErr=t=>{const e=$('#er');if(e)e.textContent=t};
 const QS=['What is your mother’s first name?','What was your first school?','What is your favourite food?','What town were you born in?'];
-let db,user,me=null,profile=null,profileLoadError='',profileEmailPending=false,recoveryEmailTarget='',admin=false,products=[],users=[],sortBy='new',formImgs=[],comments=[],view='home',cur=null,tab='users',q='',cat='',sub='',
+let db,user,me=null,profile=null,profileLoadError='',profileEmailPending=false,recoveryEmailTarget='',admin=false,products=[],users=[],sortBy='new',formImgs=[],listingLocation=null,locationCapture=0,comments=[],view='home',cur=null,tab='users',q='',cat='',sub='',
  cfg={banner:'',cats:['Electronics','Fashion','Home','Food','Farm','Services','Other'],subs:{Electronics:['Phones','Laptops','TVs & Audio','Accessories'],Fashion:['Men','Women','Kids','Shoes'],Home:['Furniture','Kitchen','Decor','Appliances'],Food:['Fresh produce','Packaged food','Drinks','Bakery'],Farm:['Crops','Livestock','Tools & inputs'],Services:['Delivery','Repairs','Cleaning','Other services'],Other:[]}};
 const base=()=>location.href.split('#')[0],U=()=>db.collection('users'),P=()=>db.collection('products');
 const canEdit=p=>admin||(me&&me.email===p.email);
+const validListingLocation=l=>l&&Number.isFinite(Number(l.lat))&&Number(l.lat)>=-90&&Number(l.lat)<=90&&Number.isFinite(Number(l.lng))&&Number(l.lng)>=-180&&Number(l.lng)<=180;
+const locationLabel=l=>validListingLocation(l)?`${Number(l.lat).toFixed(5)}, ${Number(l.lng).toFixed(5)}`:'No location added';
 const pic=p=>p.imgId?`<img src="/_blob/${esc(p.imgId)}" alt="${esc(p.title)}">`:esc(p.em||'🛍️');
 const shrink=f=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=Math.min(1,900/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*s;c.height=i.height*s;c.getContext('2d').drawImage(i,0,0,c.width,c.height);c.toBlob(b=>b?ok(b):no(),'image/jpeg',.82)};i.onerror=no;i.src=URL.createObjectURL(f)});
 const SOC=['facebook','instagram','tiktok','whatsapp','x','youtube'];
@@ -132,7 +136,7 @@ function render(){
  if(view==='detail'){const p=products.find(x=>x.id===cur);
   A.innerHTML=!p?'<div class="box">This item is no longer available. <button data-act="home">Back</button></div>':
   `<button data-act="home">← Back</button><div class="box" style="margin-top:12px"><div class="card" style="cursor:default;border:0;padding:0"><div class="em" id="mainpic" data-act="zoom" data-i="0" style="cursor:zoom-in">${pic(p)}</div>${ids(p).length?'<p class="mu" style="margin:6px 0 0">Tap the photo to view it full size</p>':''}${ids(p).length>1?`<div class="row" style="margin-top:8px">${ids(p).map((i,n)=>`<img src="/_blob/${esc(i)}" data-act="gal" data-i="${n}" data-src="${esc(i)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer" alt="">`).join('')}</div>`:''}</div>
-  <h2>${esc(p.title)}</h2><div class="pr">KSh ${Number(p.price).toLocaleString()}</div><p class="mu">${esc(p.cat)}${p.sub?' › '+esc(p.sub):''} · Seller: ${esc(p.sname)}</p><p>${esc(p.desc)}</p>
+  <h2>${esc(p.title)}</h2><div class="pr">KSh ${Number(p.price).toLocaleString()}</div><p class="mu">${esc(p.cat)}${p.sub?' › '+esc(p.sub):''} · Seller: ${esc(p.sname)}</p><p>${esc(p.desc)}</p>${validListingLocation(p.location)?`<div class="box"><b>Seller location</b><p class="mu">${esc(locationLabel(p.location))}</p><a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(`${Number(p.location.lat)},${Number(p.location.lng)}`)}">Open location in Maps</a></div>`:''}
   <div class="row">${me?`<a class="btn p" target="_blank" rel="noopener" href="https://wa.me/${wa(p.phone)}?text=${encodeURIComponent('Hi, I am interested in '+p.title+' on Yangu Market Stores')}">WhatsApp seller</a>
   <a class="btn" href="tel:+${wa(p.phone)}">Call</a><a class="btn" href="mailto:${esc(p.email)}?subject=${encodeURIComponent(p.title)}">Email</a>`:'<button class="p" data-act="signup">Sign up to buy</button><button data-act="login">Log in</button><span class="mu">Create a free account to contact the seller.</span>'}
   <button data-act="sharep" data-id="${p.id}">Share link</button>${canEdit(p)?`<button data-act="editp" data-id="${p.id}">Edit</button>`:''}${admin?`<button class="d" data-act="delp" data-id="${p.id}">Delete</button>`:''}</div><p class="mu" style="margin-top:14px">Share on social media</p><div class="row" style="margin-top:4px">${shr(base()+'#p-'+p.id,p.title+' – KSh '+Number(p.price).toLocaleString()+' on Yangu Market Stores')}</div></div>`;return}
@@ -156,13 +160,38 @@ const authForm=m=>modal(m==='login'?`<h3>Log in</h3><label>Email</label><input i
 const fillSub=cur=>{const s=$('#sb');if(!s)return;const l=cfg.subs?.[val('c')]||[];s.innerHTML='<option value="">None</option>'+[...new Set([...l,...(cur?[cur]:[])])].map(x=>`<option ${x===cur?'selected':''}>${esc(x)}</option>`).join('')};
 const ids=p=>p?(p.imgIds||(p.imgId?[p.imgId]:[])):[];
 const thumbs=()=>{const t=$('#ths');if(t)t.innerHTML=formImgs.map(i=>`<span style="position:relative;display:inline-block;margin:4px"><img src="/_blob/${esc(i)}" width="60" height="60" style="object-fit:cover;border-radius:8px" alt=""><button data-act="rmimg" data-id="${esc(i)}" style="position:absolute;top:-6px;right:-6px;padding:0 7px;border-radius:50%">×</button></span>`).join('')};
-const prodForm=p=>{formImgs=ids(p);modal(`<h3>${p?'Edit':'Sell a'} product</h3><label>Title</label><input id="t" value="${esc(p?.title)}"><label>Price (KSh)</label><input id="pr" type="number" min="0" value="${esc(p?.price)}"><label>Category</label><select id="c">${[...new Set([...cfg.cats,...(p?.cat?[p.cat]:[])])].map(c=>`<option ${p?.cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select><label>Subcategory</label><select id="sb"></select><label>Product photos (up to 10, you can pick several)</label><div id="ths"></div><input id="img" type="file" accept="image/*" multiple><label>Or take a photo with your camera (adds one)</label><input id="cam" type="file" accept="image/*" capture="environment"><label>Description</label><textarea id="d" rows="3">${esc(p?.desc)}</textarea><div class="row" style="margin-top:6px"><button data-act="aidesc">✨ Write with AI</button></div><div class="er" id="er"></div><div class="row"><button class="p" data-act="savep" data-id="${p?.id||''}">Save</button><button data-act="close">Cancel</button></div>`);thumbs();fillSub(p?.sub)};
+const prodForm=p=>{
+ locationCapture++;formImgs=ids(p);listingLocation=validListingLocation(p?.location)?{lat:Number(p.location.lat),lng:Number(p.location.lng)}:null;
+ modal(`<h3>${p?'Edit':'Sell a'} product</h3><label>Title</label><input id="t" value="${esc(p?.title)}"><label>Price (KSh)</label><input id="pr" type="number" min="0" value="${esc(p?.price)}"><label>Category</label><select id="c">${[...new Set([...cfg.cats,...(p?.cat?[p.cat]:[])])].map(c=>`<option ${p?.cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select><label>Subcategory</label><select id="sb"></select><label>Product photos (up to 10, you can pick several)</label><div id="ths"></div><input id="img" type="file" accept="image/*" multiple><label>Or take a photo with your camera (adds one)</label><input id="cam" type="file" accept="image/*" capture="environment"><label>Description</label><textarea id="d" rows="3">${esc(p?.desc)}</textarea><div class="listing-location"><b>Seller location (optional)</b><p class="mu">Add a one-time pin for this listing. It will be visible to buyers. Your location is not tracked in the background.</p><div id="listingLocationStatus" class="mu" aria-live="polite">${esc(locationLabel(listingLocation))}</div><div class="row"><button type="button" data-act="captureListingLocation">Use my current location</button><button type="button" id="removeListingLocation" data-act="removeListingLocation" ${listingLocation?'':'hidden'}>Remove pin</button></div></div><div class="row" style="margin-top:6px"><button data-act="aidesc">✨ Write with AI</button></div><div class="er" id="er"></div><div class="row"><button class="p" id="saveProduct" data-act="savep" data-id="${p?.id||''}">Save</button><button data-act="close">Cancel</button></div>`);
+ thumbs();fillSub(p?.sub);
+};
 const setMe=u=>{me=u;try{u?localStorage.setItem('ym_e',u.email):localStorage.removeItem('ym_e')}catch(e){}};
 let zIds=[],zI=0;
 const showZ=()=>{modal(`<div style="text-align:center"><img src="/_blob/${esc(zIds[zI])}" style="max-width:100%;max-height:70vh;object-fit:contain" alt=""><div class="row" style="justify-content:center;align-items:center">${zIds.length>1?`<button data-act="zprev">‹</button><span class="mu">${zI+1} / ${zIds.length}</span><button data-act="znext">›</button>`:''}<button data-act="close">Close</button></div></div>`);$('#mb').style.maxWidth='900px'};
 const A={
  home(){view='home';q='';cat='';sub='';render()},close:closeM,login:()=>authForm('login'),signup:()=>authForm('signup'),
  toggleMenu(t){const m=$('#serviceMenu'),open=m.hidden;m.hidden=!open;t.setAttribute('aria-expanded',String(open))},
+ captureListingLocation(){
+  const status=$('#listingLocationStatus'),save=$('#saveProduct'),request=++locationCapture;
+  const finish=()=>{if(request===locationCapture&&save)save.disabled=false};
+  if(!navigator.geolocation){if(status)status.textContent='Location is not supported by this browser.';return}
+  if(save)save.disabled=true;
+  if(status)status.textContent='Getting your location… Allow location access if prompted.';
+  navigator.geolocation.getCurrentPosition(pos=>{
+   if(request!==locationCapture)return;
+   listingLocation={lat:pos.coords.latitude,lng:pos.coords.longitude};
+   const current=$('#listingLocationStatus'),remove=$('#removeListingLocation');
+   if(current)current.textContent=`Pin ready: ${locationLabel(listingLocation)}`;
+   if(remove)remove.hidden=false;
+   finish();
+  },err=>{
+   if(request!==locationCapture)return;
+   const current=$('#listingLocationStatus');
+   if(current)current.textContent=err.code===1?'Location permission was denied. Allow location access in your browser settings and try again.':err.code===2?'Your location is unavailable. Try again or move to an area with a stronger signal.':'Could not get your location in time. Check your connection and try again.';
+   finish();
+  },{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+ },
+ removeListingLocation(){locationCapture++;listingLocation=null;const status=$('#listingLocationStatus'),remove=$('#removeListingLocation'),save=$('#saveProduct');if(status)status.textContent='No location added';if(remove)remove.hidden=true;if(save)save.disabled=false},
  open(t){cur=t.dataset.id;view='detail';render();scrollTo(0,0)},mine(){view='mine';render()},admin(){view='admin';render()},tab(t){tab=t.dataset.id;render()},
  share:()=>copy(base()),sharep:t=>copy(base()+'#p-'+t.dataset.id),logout(){setMe(null);view='home';render()},
  addp:()=>prodForm(),editp(t){prodForm(products.find(p=>p.id===t.dataset.id))},
@@ -187,7 +216,7 @@ const A={
   setErr('Checking category…');let cat2=val('c'),sub2=val('sb');
   try{const s=await claude.use('sample');if(s&&cfg.cats.length>1){const r=await s.json(`Choose the single best category for this marketplace product from this list of categories and subcategories: ${JSON.stringify(cfg.cats.map(c=>({category:c,subcategories:cfg.subs?.[c]||[]})))}. Reply JSON only: {"category":"<exact category>","subcategory":"<exact subcategory of that category, or empty string>"}. Title: ${title}. Description: ${val('d')}`);if(cfg.cats.includes(r.category)&&r.category!==cat2&&confirm(`This looks like it belongs in "${r.category}", not "${cat2}". Move it to "${r.category}"?`))cat2=r.category;if(cat2!==val('c'))sub2=(cfg.subs?.[cat2]||[]).includes(r.subcategory)?r.subcategory:'';else if(!sub2&&(cfg.subs?.[cat2]||[]).includes(r.subcategory))sub2=r.subcategory}}catch(x){}
   setErr('');
-  const d={title,price,cat:cat2,sub:sub2,em:'🛍️',imgId:imgIds[0]||'',imgIds,desc:val('d'),email:old?.email||me?.email||'admin',sname:old?.sname||me?.name||'Yangu Admin',phone:old?.phone||me?.phone||'',created:old?.created||Date.now()};
+  const d={title,price,cat:cat2,sub:sub2,em:'🛍️',imgId:imgIds[0]||'',imgIds,desc:val('d'),location:validListingLocation(listingLocation)?listingLocation:null,email:old?.email||me?.email||'admin',sname:old?.sname||me?.name||'Yangu Admin',phone:old?.phone||me?.phone||'',created:old?.created||Date.now()};
   try{await P().doc(id).set(d);if(!(await P().doc(id).get()).exists)throw 0;closeM()}catch(x){setErr('Could not save. Try again.')}},
  async delp(t){if(!admin)return;if(!confirm('Delete this product?'))return;try{await P().doc(t.dataset.id).delete();if(view==='detail'){view='home';render()}}catch(x){alert('Could not delete.')}},
  async delu(t){if(confirm('Remove this user?'))try{await U().doc(t.dataset.id).delete()}catch(x){alert('Failed')}},
