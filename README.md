@@ -18,6 +18,8 @@ When creating or editing a product, sellers can enter a general area, town, stre
 
 Buyers can choose **Find goods near me** and select a 10, 25, 50, or 100 km radius. Yangu requests the buyer's location only after they tap the button, calculates distances in their browser, and keeps that location in page memory only. Nearby matching requires a seller's map pin; text-only locations cannot be measured by distance.
 
+Buyers can add multiple listings to the **Basket** and return to it later on the same device. The basket stores listing IDs in the browser, shows an estimated total, and offers a separate seller contact link for each good. It does not reserve stock, place an order, or process payment; buyers arrange purchases directly with sellers.
+
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 
 ## Run locally
