@@ -197,17 +197,28 @@ app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getU
 app.post('/api/admin/reset',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);const e=norm(req.body.email),temp='Yangu'+crypto.randomInt(1000,10000);
  await q("update docs set data=data||$1 where coll='users' and id=$2",[{hash:await bcrypt.hash(temp,10)},hex(e)]);res.json({temp})});
 
-const COLL=['products','comments','site','users'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r;
+const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r;
 app.use('/api/c/:c',(req,res,next)=>COLL.includes(req.params.c)?next():res.sendStatus(404));
 app.get('/api/c/:c',async(req,res)=>{const c=req.params.c;if(c==='users'&&!adm(req.u))return res.sendStatus(403);
- res.json((await q('select id,data from docs where coll=$1',[c])).rows.map(r=>({id:r.id,data:c==='users'?strip(r.data):r.data})))});
+ const rows=(await q('select id,data from docs where coll=$1',[c])).rows;
+ res.json(rows.filter(r=>c!=='ads'||adm(req.u)||(r.data.approved===true&&r.data.active===true)).map(r=>({id:r.id,data:c==='users'?strip(r.data):r.data})))});
 app.get('/api/c/:c/:id',async(req,res)=>{const{c,id}=req.params;if(c==='users')return res.sendStatus(403);
- const r=(await q('select data from docs where coll=$1 and id=$2',[c,id])).rows[0];r?res.json({data:r.data}):res.sendStatus(404)});
+ const r=(await q('select data from docs where coll=$1 and id=$2',[c,id])).rows[0];
+ if(!r||(c==='ads'&&!adm(req.u)&&(r.data.approved!==true||r.data.active!==true)))return res.sendStatus(404);
+ res.json({data:r.data})});
 const write=merge=>async(req,res)=>{const{c,id}=req.params,u=req.u;
- if(!u)return res.sendStatus(401);if(c==='users'||(c==='site'&&!adm(u)))return res.sendStatus(403);
+ if(!u)return res.sendStatus(401);if(c==='users'||((c==='site'||c==='ads')&&!adm(u)))return res.sendStatus(403);
  const old=(await q('select data from docs where coll=$1 and id=$2',[c,id])).rows[0]?.data;let d=req.body||{};
  if(c==='products'){if(old&&old.email!==u.email&&!adm(u))return res.sendStatus(403);
   d=old?{...d,email:old.email,sname:old.sname,phone:old.phone}:{...d,email:u.email,sname:u.name,phone:u.phone}}
+ if(c==='ads'){
+  if(typeof d.title!=='string'||(d.description!==undefined&&typeof d.description!=='string')||(d.linkUrl!==undefined&&typeof d.linkUrl!=='string'))return res.status(400).json({error:'Ad title, description, and link must be text.'});
+  const title=String(d.title||'').trim(),description=String(d.description||'').trim(),linkUrl=String(d.linkUrl||'').trim();
+  if(!title||title.length>100||description.length>300)return res.status(400).json({error:'Enter an ad title (up to 100 characters) and description (up to 300 characters).'});
+  if(linkUrl){let url;try{url=new URL(linkUrl)}catch{return res.status(400).json({error:'Ad links must be valid HTTPS URLs.'})}
+   if(url.protocol!=='https:'||url.username||url.password)return res.status(400).json({error:'Ad links must be valid HTTPS URLs.'})}
+  d={title,description,linkUrl,active:d.active===true,approved:true,approvedBy:u.email,approvedAt:new Date().toISOString()};
+ }
  if(c==='comments'){if(old)return res.sendStatus(403);d={...d,email:u.email,name:u.name}}
  await q('insert into docs values($1,$2,$3) on conflict(coll,id) do update set data='+(merge?'docs.data||$3':'$3'),[c,id,d]);res.json({ok:1})};
 app.put('/api/c/:c/:id',write(false));app.patch('/api/c/:c/:id',write(true));
