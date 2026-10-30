@@ -11,6 +11,7 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectU
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
 const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
+const videoUp=multer({storage:multer.memoryStorage(),limits:{fileSize:20*1024*1024}});
 const sign=(res,e)=>res.cookie('t',jwt.sign({e},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
 const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role,avatarId:u.avatarId||''}),adm=u=>u&&u.role==='admin';
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
@@ -197,37 +198,57 @@ app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getU
 app.post('/api/admin/reset',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);const e=norm(req.body.email),temp='Yangu'+crypto.randomInt(1000,10000);
  await q("update docs set data=data||$1 where coll='users' and id=$2",[{hash:await bcrypt.hash(temp,10)},hex(e)]);res.json({temp})});
 
-const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r;
+const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r,publicAd=d=>({...d,hasVideo:!!d.videoId,videoId:undefined});
 app.use('/api/c/:c',(req,res,next)=>COLL.includes(req.params.c)?next():res.sendStatus(404));
 app.get('/api/c/:c',async(req,res)=>{const c=req.params.c;if(c==='users'&&!adm(req.u))return res.sendStatus(403);
  const rows=(await q('select id,data from docs where coll=$1',[c])).rows;
- res.json(rows.filter(r=>c!=='ads'||adm(req.u)||(r.data.approved===true&&r.data.active===true)).map(r=>({id:r.id,data:c==='users'?strip(r.data):r.data})))});
+ res.json(rows.filter(r=>c!=='ads'||adm(req.u)||(r.data.approved===true&&r.data.active===true)).map(r=>({id:r.id,data:c==='users'?strip(r.data):c==='ads'&&!adm(req.u)?publicAd(r.data):r.data})))});
 app.get('/api/c/:c/:id',async(req,res)=>{const{c,id}=req.params;if(c==='users')return res.sendStatus(403);
  const r=(await q('select data from docs where coll=$1 and id=$2',[c,id])).rows[0];
  if(!r||(c==='ads'&&!adm(req.u)&&(r.data.approved!==true||r.data.active!==true)))return res.sendStatus(404);
- res.json({data:r.data})});
+ res.json({data:c==='ads'&&!adm(req.u)?publicAd(r.data):r.data})});
 const write=merge=>async(req,res)=>{const{c,id}=req.params,u=req.u;
  if(!u)return res.sendStatus(401);if(c==='users'||((c==='site'||c==='ads')&&!adm(u)))return res.sendStatus(403);
  const old=(await q('select data from docs where coll=$1 and id=$2',[c,id])).rows[0]?.data;let d=req.body||{};
  if(c==='products'){if(old&&old.email!==u.email&&!adm(u))return res.sendStatus(403);
   d=old?{...d,email:old.email,sname:old.sname,phone:old.phone}:{...d,email:u.email,sname:u.name,phone:u.phone}}
  if(c==='ads'){
-  if(typeof d.title!=='string'||(d.description!==undefined&&typeof d.description!=='string')||(d.linkUrl!==undefined&&typeof d.linkUrl!=='string'))return res.status(400).json({error:'Ad title, description, and link must be text.'});
-  const title=String(d.title||'').trim(),description=String(d.description||'').trim(),linkUrl=String(d.linkUrl||'').trim();
+  if(typeof d.title!=='string'||(d.description!==undefined&&typeof d.description!=='string')||(d.linkUrl!==undefined&&typeof d.linkUrl!=='string')||(d.videoUrl!==undefined&&typeof d.videoUrl!=='string')||(d.videoId!==undefined&&typeof d.videoId!=='string'))return res.status(400).json({error:'Ad title, description, links, and video details must be text.'});
+  const title=String(d.title||'').trim(),description=String(d.description||'').trim(),linkUrl=String(d.linkUrl||'').trim(),videoUrl=String(d.videoUrl||'').trim(),videoId=String(d.videoId||'').trim();
   if(!title||title.length>100||description.length>300)return res.status(400).json({error:'Enter an ad title (up to 100 characters) and description (up to 300 characters).'});
-  if(linkUrl){let url;try{url=new URL(linkUrl)}catch{return res.status(400).json({error:'Ad links must be valid HTTPS URLs.'})}
-   if(url.protocol!=='https:'||url.username||url.password)return res.status(400).json({error:'Ad links must be valid HTTPS URLs.'})}
-  d={title,description,linkUrl,active:d.active===true,approved:true,approvedBy:u.email,approvedAt:new Date().toISOString()};
+  for(const candidate of [linkUrl,videoUrl])if(candidate){let url;try{url=new URL(candidate)}catch{return res.status(400).json({error:'Ad links and video URLs must be valid HTTPS URLs.'})}
+   if(url.protocol!=='https:'||url.username||url.password)return res.status(400).json({error:'Ad links and video URLs must be valid HTTPS URLs.'})}
+  if(videoUrl&&videoId)return res.status(400).json({error:'Choose a hosted video URL or an uploaded video, not both.'});
+  if(videoId){
+   if(!/^[a-f\d]{32}$/i.test(videoId))return res.status(400).json({error:'The uploaded video is invalid.'});
+   const file=(await q('select mime from files where id=$1',[videoId])).rows[0];
+   if(!file||!['video/mp4','video/webm'].includes(file.mime))return res.status(400).json({error:'The uploaded video could not be found.'});
+  }
+  d={title,description,linkUrl,videoUrl,videoId,active:d.active===true,approved:true,approvedBy:u.email,approvedAt:new Date().toISOString()};
  }
  if(c==='comments'){if(old)return res.sendStatus(403);d={...d,email:u.email,name:u.name}}
  await q('insert into docs values($1,$2,$3) on conflict(coll,id) do update set data='+(merge?'docs.data||$3':'$3'),[c,id,d]);res.json({ok:1})};
 app.put('/api/c/:c/:id',write(false));app.patch('/api/c/:c/:id',write(true));
 app.delete('/api/c/:c/:id',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);await q('delete from docs where coll=$1 and id=$2',[req.params.c,req.params.id]);res.json({ok:1})});
 
+app.get('/api/ads/:id/video',async(req,res)=>{const ad=(await q("select data from docs where coll='ads' and id=$1",[req.params.id])).rows[0]?.data;
+ if(!ad||(!adm(req.u)&&(!ad.approved||!ad.active))||!ad.videoId)return res.sendStatus(404);
+ const file=(await q('select mime,data from files where id=$1',[ad.videoId])).rows[0];
+ if(!file||!['video/mp4','video/webm'].includes(file.mime))return res.sendStatus(404);
+ res.type(file.mime).set('Cache-Control','private,no-store').send(file.data)});
+app.post('/api/upload-video',async(req,res,next)=>{if(!adm(req.u))return res.sendStatus(403);
+ try{await new Promise((resolve,reject)=>videoUp.single('file')(req,res,err=>err?reject(err):resolve()))}
+ catch(err){if(err.code==='LIMIT_FILE_SIZE')return res.status(413).json({error:'Videos must be 20 MB or smaller.'});return next(err)}
+ const file=req.file;if(!file)return res.status(400).json({error:'Choose an MP4 or WebM video.'});
+ const isMp4=file.mimetype==='video/mp4'&&file.buffer.subarray(4,8).toString()==='ftyp';
+ const isWebm=file.mimetype==='video/webm'&&file.buffer.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]));
+ if(!isMp4&&!isWebm)return res.status(415).json({error:'Only valid MP4 or WebM videos are supported.'});
+ const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,file.mimetype,file.buffer]);res.json({id});
+});
 app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u||!req.file||!/^image\//.test(req.file.mimetype))return res.sendStatus(400);
  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);res.json({id})});
 app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from files where id=$1',[req.params.id.replace(/\W/g,'')])).rows[0];
- if(!r)return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
+ if(!r||r.mime.startsWith('video/'))return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
 q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
  .then(()=>q('alter table signup_otps add column if not exists link_token_hash text, add column if not exists verified_at timestamptz'))
