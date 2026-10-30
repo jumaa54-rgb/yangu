@@ -6,6 +6,7 @@ const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
 const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
 const PUBLIC_URL=process.env.PUBLIC_URL||process.env.RENDER_EXTERNAL_URL||'http://localhost:3000';
+const TERMS_VERSION='2026-10-30';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
@@ -67,44 +68,19 @@ app.post('/api/signup/verify-link',async(req,res)=>{
  finally{c.release()}});
 
 app.post('/api/signup',async(req,res)=>{
- const{name,email,phone,password,q:qn,qa,otp,verificationToken}=req.body,e=norm(email);
+ const{name,email,phone,password,q:qn,qa,termsAccepted,termsVersion}=req.body,e=norm(email);
  if(!name||!/^\S+@\S+\.\S+$/.test(e)||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid email, phone, 6+ character password).'});
- const viaLink=typeof verificationToken==='string'&&verificationToken.length>=40;
- if(!viaLink&&!/^\d{6}$/.test(String(otp||'')))return res.status(400).json({error:'Enter the six-digit verification code sent to your email.'});
+ if(termsAccepted!==true||termsVersion!==TERMS_VERSION)return res.status(400).json({error:'Read and accept the current Terms and Conditions before creating an account.'});
  const c=await pool.connect();
  try{
   await c.query('begin');
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
-  const verification=(await c.query('select code_hash,link_token_hash,verified_at,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
-  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
-   await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
-   return res.status(400).json({error:'Your verification code has expired. Request a new one.'});
-  }
-  if(!viaLink&&verification.attempts>=5){
-   await c.query('commit');
-   return res.status(429).json({error:'Too many incorrect codes. Request a new verification code.'});
-  }
-  if(viaLink){
-   const supplied=Buffer.from(otpHash(verificationToken),'hex'),expected=Buffer.from(verification.link_token_hash||'','hex');
-   if(!verification.verified_at||expected.length!==supplied.length||!crypto.timingSafeEqual(supplied,expected)){
-    await c.query('commit');return res.status(401).json({error:'Open the email verification link before creating your account.'});
-   }
-  }else{
-   const supplied=Buffer.from(otpHash(String(otp)),'hex'),expected=Buffer.from(verification.code_hash,'hex');
-   if(!crypto.timingSafeEqual(supplied,expected)){
-    const attempts=verification.attempts+1;
-    await c.query('update signup_otps set attempts=$1 where email=$2',[attempts,e]);
-    await c.query('commit');
-    return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Request a new verification code.':'That verification code is incorrect.'});
-   }
-  }
   if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
-   await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');
+   await c.query('commit');
    return res.status(409).json({error:'This email is already in use by an account.'});
   }
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:true,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
-  if(!ins.rowCount){await c.query('delete from signup_otps where email=$1',[e]);await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
-  await c.query('delete from signup_otps where email=$1',[e]);
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
+  if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
