@@ -20,6 +20,8 @@ Buyers can choose **Find goods near me** and select a 10, 25, 50, or 100 km radi
 
 Buyers can add multiple listings to the **Basket** and return to it later on the same device. The basket stores listing IDs in the browser, shows an estimated total, and offers a separate seller contact link for each good. It does not reserve stock, place an order, or process payment; buyers arrange purchases directly with sellers.
 
+Administrators can manage advertisements in **Menu → Admin panel → Ads**. Only ads an administrator approves and publishes appear on the marketplace; administrators can pause, edit, or delete them. Ad destination links must use HTTPS.
+
 Email addresses are normalized and unique across accounts. Passwords are hashed per account and may be reused by different users.
 
 ## Run locally
