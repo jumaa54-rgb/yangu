@@ -114,6 +114,8 @@ input,select,textarea{border-radius:8px}
 .terms-copy summary{cursor:pointer;font-weight:600}
 .terms-copy p{margin:10px 0}
 .ad-popup-video{display:block;width:100%;max-height:55vh;background:#000;border-radius:8px;margin:12px 0}
+.ad-popup-content{position:relative;padding-top:24px}
+.ad-popup-close{position:absolute;top:0;right:0;width:38px;height:38px;padding:0;border:0;border-radius:50%;font-size:26px;line-height:1}
 @media(max-width:480px){.basket-item{align-items:flex-start;gap:10px;padding:9px}.basket-item-picture{width:64px;height:64px;flex-basis:64px}.basket-item-actions{gap:6px}}
 </style></head><body>
 <a href="#app" class="skip-link">Skip to marketplace</a>
@@ -168,11 +170,11 @@ const maybeShowAdPopup=()=>{
  adNextPopupAt=now+AD_POPUP_INTERVAL;
  scheduleAdPopup(AD_POPUP_INTERVAL);
  const videoSrc=ad.videoId||ad.hasVideo?`/api/ads/${encodeURIComponent(ad.id)}/video`:ad.videoUrl;
- modal(`<section data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle"><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" controls autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status">Video starts muted. Exiting before it finishes will open the sponsor’s site.</p>`:''}<div class="row">${ad.linkUrl?`<a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Learn more</a>`:''}<button id="closeAdButton" type="button" data-act="close">${videoSrc?(ad.linkUrl?'Visit sponsor to exit':'Watch until finished'):'Close ad'}</button></div></section>`);
+ modal(`<section class="ad-popup-content" data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle"><button class="ad-popup-close" type="button" data-act="close" aria-label="Close advertisement" title="Close advertisement">×</button><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status" hidden></p>`:''}${ad.linkUrl?`<div class="row"><a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Visit sponsor</a></div>`:''}</section>`);
  $('#mb').style.maxWidth='760px';
- $('#mb [data-act="close"]').focus();
+ $('#mb .ad-popup-close').focus();
  const video=$('#mb video');
- if(video){video.addEventListener('ended',()=>{$('#closeAdButton').textContent='Close ad';const status=$('#adVideoStatus');if(status)status.textContent='Video finished. You can close this ad now.'},{once:true});video.muted=true;video.play().catch(()=>{const status=$('#adVideoStatus');if(status)status.textContent='Tap play to start the video. Exiting before it finishes will open the sponsor’s site.'})}
+ if(video){video.muted=true;video.play().catch(()=>{const status=$('#adVideoStatus');if(status){status.hidden=false;status.textContent='Automatic playback is unavailable. Close the ad to visit the sponsor.'}})}
 };
 const wa=n=>{n=String(n||'').replace(/\D/g,'');return n.startsWith('0')?'254'+n.slice(1):n};
 const modal=h=>{$('#mb').style.maxWidth='';$('#mb').innerHTML=h;$('#md').classList.add('on')},closeM=()=>{
@@ -180,7 +182,7 @@ const modal=h=>{$('#mb').style.maxWidth='';$('#mb').innerHTML=h;$('#md').classLi
  if(video&&!video.ended){
   const sponsor=ad.dataset.sponsorUrl;
   if(sponsor){location.assign(sponsor);return}
-  const status=$('#adVideoStatus');if(status)status.textContent='This video has no sponsor link. Watch until it finishes to close the ad.';
+  const status=$('#adVideoStatus');if(status){status.hidden=false;status.textContent='This ad has no sponsor link and can only be closed after playback finishes.'}
   return
  }
  $('#mb').querySelectorAll('video').forEach(video=>video.pause());$('#md').classList.remove('on');maybeShowAdPopup()
