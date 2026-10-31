@@ -9,12 +9,19 @@ const openSignup=A.signup;
 A.signup=()=>openSignup();
 A.dosignup=async()=>{
  const data={name:val('n'),email:val('e').trim().toLowerCase(),phone:val('ph'),password:$('#pw').value,q:$('#q').value,qa:val('qa'),termsAccepted:$('#termsAccepted')?.checked===true,termsVersion:TERMS_VERSION};
- if(!data.name||!/^\S+@\S+\.\S+$/.test(data.email)||data.phone.replace(/\D/g,'').length<9||data.password.length<6||!data.qa)return setErr('Fill all fields correctly (valid email, phone, 6+ character password).');
+ if(!validEmail(data.email))return setErr('Enter a valid email address (for example, name@example.com).');
+ if(!data.name||data.phone.replace(/\D/g,'').length<9||data.password.length<6||!data.qa)return setErr('Fill all fields correctly (valid phone, 6+ character password, and recovery answer).');
  if(!data.termsAccepted)return setErr('Please read and accept the Terms and Conditions to create your account.');
  let r;try{r=await J('/api/signup',data)}catch{const e=$('#er');if(e)e.innerHTML=`Could not create the account. Try again. ${supportLinks()}`;return}
  if(!r.ok){const e=$('#er');if(e)e.innerHTML=`${esc(r.d.error||'Could not create the account.')} ${supportLinks()}`;return}
  afterAuth(r);
 };
+document.addEventListener('input',e=>{
+ if(e.target.id!=='e'||!$('#emailValidation'))return;
+ const value=e.target.value.trim(),valid=validEmail(value),message=$('#emailValidation');
+ e.target.setAttribute('aria-invalid',String(!!value&&!valid));
+ message.textContent=value&&!valid?'Enter a valid email address, such as name@example.com.':'';
+});
 A.help=()=>modal(`<h3>Need help?</h3><p>For sign-up or account problems, contact the first administrator.</p><div class="row"><a class="btn p" href="mailto:${SUPPORT_EMAIL}">Email ${SUPPORT_EMAIL}</a><a class="btn" href="tel:${SUPPORT_PHONE}">Call ${SUPPORT_PHONE}</a><a class="btn" href="https://wa.me/${SUPPORT_PHONE.replace(/\D/g,'')}">WhatsApp</a></div><p class="mu">For product suggestions, use <b>✨ Ask AI</b>.</p>`);
 A.dologin=async()=>afterAuth(await J('/api/login',{email:val('e'),password:$('#pw').value}));
 A.fstep=async()=>{const r=await J('/api/forgot',{email:val('e')});if(!r.ok)return setErr(r.d.error||'Try again.');
