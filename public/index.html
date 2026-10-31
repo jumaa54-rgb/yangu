@@ -150,24 +150,32 @@ const shrink=f=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=
 const SOC=['facebook','instagram','tiktok','whatsapp','x','youtube'];
 const shr=(u,t)=>{const A1=encodeURIComponent(u),T=encodeURIComponent(t),M=encodeURIComponent(t+' '+u);return [['WhatsApp','https://wa.me/?text='+M],['Facebook','https://www.facebook.com/sharer/sharer.php?u='+A1],['X','https://twitter.com/intent/tweet?text='+T+'&url='+A1],['Telegram','https://t.me/share/url?url='+A1+'&text='+T],['LinkedIn','https://www.linkedin.com/sharing/share-offsite/?url='+A1],['Reddit','https://www.reddit.com/submit?url='+A1+'&title='+T],['Bluesky','https://bsky.app/intent/compose?text='+M],['Email','mailto:?subject='+T+'&body='+M]].map(([n,h])=>`<a class="btn" target="_blank" rel="noopener noreferrer" href="${h}">${n}</a>`).join('')};
 const social=()=>`<div class="box" style="margin-top:16px"><b>Follow and share Yangu Market</b><div class="row">${SOC.filter(k=>cfg.soc&&String(cfg.soc[k]||'').startsWith('https://')).map(k=>`<a class="btn p" target="_blank" rel="noopener" href="${esc(cfg.soc[k])}">${k[0].toUpperCase()+k.slice(1)}</a>`).join('')}</div><p class="mu" style="margin:10px 0 0">Share this site</p><div class="row" style="margin-top:4px">${shr(base(),'Yangu Market Stores – Bidhaa kwa bei yangu')}</div></div>`;
-let adPopupShown=false;
+const AD_POPUP_INTERVAL=10*60*1000;
+let adPopupTimer=null,adNextPopupAt=0;
+const scheduleAdPopup=delay=>{
+ if(adPopupTimer!==null)return;
+ adPopupTimer=setTimeout(()=>{adPopupTimer=null;maybeShowAdPopup()},delay);
+};
 const maybeShowAdPopup=()=>{
- if(view!=='home'||!ads.length||$('#md').classList.contains('on'))return;
- try{if(sessionStorage.getItem('ym_ad_popup_shown')==='1')return}catch{if(adPopupShown)return}
+ if(!ads.length)return;
+ const now=Date.now();
+ if(adNextPopupAt&&now<adNextPopupAt){scheduleAdPopup(adNextPopupAt-now);return}
+ if($('#md').classList.contains('on')){scheduleAdPopup(15000);return}
  const activeAds=ads.filter(ad=>ad.approved===true&&ad.active===true);
  if(!activeAds.length)return;
  const videoAds=activeAds.filter(ad=>ad.videoId||ad.hasVideo||ad.videoUrl),candidates=videoAds.length?videoAds:activeAds;
  const ad=candidates[Math.floor(Math.random()*candidates.length)];
- adPopupShown=true;
- try{sessionStorage.setItem('ym_ad_popup_shown','1')}catch{}
+ adNextPopupAt=now+AD_POPUP_INTERVAL;
+ scheduleAdPopup(AD_POPUP_INTERVAL);
  const videoSrc=ad.videoId||ad.hasVideo?`/api/ads/${encodeURIComponent(ad.id)}/video`:ad.videoUrl;
  modal(`<section role="dialog" aria-modal="true" aria-labelledby="adPopupTitle"><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" controls autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status">Video starts muted; use the player controls to turn on sound.</p>`:''}<div class="row">${ad.linkUrl?`<a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Learn more</a>`:''}<button type="button" data-act="close">Close ad</button></div></section>`);
+ $('#mb').style.maxWidth='760px';
  $('#mb [data-act="close"]').focus();
  const video=$('#mb video');
  if(video){video.muted=true;video.play().catch(()=>{const status=$('#adVideoStatus');if(status)status.textContent='Tap play to start this video.'})}
 };
 const wa=n=>{n=String(n||'').replace(/\D/g,'');return n.startsWith('0')?'254'+n.slice(1):n};
-const modal=h=>{$('#mb').style.maxWidth='';$('#mb').innerHTML=h;$('#md').classList.add('on')},closeM=()=>{$('#mb').querySelectorAll('video').forEach(video=>video.pause());$('#md').classList.remove('on')};
+const modal=h=>{$('#mb').style.maxWidth='';$('#mb').innerHTML=h;$('#md').classList.add('on')},closeM=()=>{$('#mb').querySelectorAll('video').forEach(video=>video.pause());$('#md').classList.remove('on');maybeShowAdPopup()};
 async function copy(t){try{await navigator.clipboard.writeText(t);alert('Link copied!')}catch(e){prompt('Copy this link:',t)}}
 const basketItemMarkup=(id,p)=>{
  if(!p)return `<div class="basket-item"><div class="basket-item-details"><h3>Listing no longer available</h3><p class="mu">This good may have been removed by its seller.</p><button data-act="removeBasketItem" data-id="${esc(id)}">Remove</button></div></div>`;
