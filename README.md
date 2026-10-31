@@ -4,7 +4,7 @@ Yangu is an online marketplace for local sellers and buyers.
 
 ## Deploy on Render
 
-This repository includes a Render Blueprint in `render.yaml`. In the Render Dashboard, create a **Blueprint Instance** for this repository and select the `jumaa54-rgb-yangu-deployment` branch to deploy the preview. Render will create the web service and PostgreSQL database together. During setup, enter the comma-separated `ADMIN_EMAILS` addresses that should receive administrator access; Render generates `JWT_SECRET` automatically.
+This repository includes a Render Blueprint in `render.yaml`. In the Render Dashboard, create a **Blueprint Instance** for this repository and select the `jumaa54-rgb-yangu-deployment` branch to deploy the preview. Render will create the web service and PostgreSQL database together. On the first deployment of this change, the two earliest registered accounts become administrators; if fewer than two accounts exist, the next signups fill the remaining administrator slot(s). No administrator email configuration is required, and later signups cannot gain admin access through environment settings.
 
 The Blueprint uses Render's free plans. The web service may spin down when idle, and the free PostgreSQL database expires after 30 days; use paid plans for persistent production hosting. Render provides the `PORT` environment variable automatically. The `onrender.com` address appears in the web service dashboard after its first successful deploy. To use a custom domain, add it in the service settings and configure the DNS records shown there.
 

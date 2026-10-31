@@ -10,7 +10,6 @@ const validEmail=value=>{
  const labels=domain.split('.');
  return labels.length>1&&labels.every(label=>label.length<=63&&/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))&&labels[labels.length-1].length>=2&&/[A-Za-z]/.test(labels[labels.length-1]);
 };
-const ADMIN_EMAILS=new Set((process.env.ADMIN_EMAILS||'').split(',').map(norm).filter(Boolean));
 const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
 const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
@@ -85,13 +84,17 @@ app.post('/api/signup',async(req,res)=>{
  const c=await pool.connect();
  try{
   await c.query('begin');
+  await c.query("select pg_advisory_xact_lock(hashtext('yangu-admin-accounts')::bigint)");
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
   if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
    await c.query('commit');
    return res.status(409).json({error:'This email is already in use by an account.'});
   }
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:ADMIN_EMAILS.has(e)?'admin':'seller',created:Date.now()}]);
+  const slots=(await c.query('select slot from admin_slots')).rows.map(row=>row.slot),adminSlot=[1,2].find(slot=>!slots.includes(slot));
+  const role=adminSlot?'admin':'seller';
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role,created:Date.now()}]);
   if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
+  if(adminSlot)await c.query('insert into admin_slots(slot,user_id) values($1,$2)',[adminSlot,hex(e)]);
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
@@ -239,7 +242,9 @@ const write=merge=>async(req,res)=>{const{c,id}=req.params,u=req.u;
  if(c==='comments'){if(old)return res.sendStatus(403);d={...d,email:u.email,name:u.name}}
  await q('insert into docs values($1,$2,$3) on conflict(coll,id) do update set data='+(merge?'docs.data||$3':'$3'),[c,id,d]);res.json({ok:1})};
 app.put('/api/c/:c/:id',write(false));app.patch('/api/c/:c/:id',write(true));
-app.delete('/api/c/:c/:id',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);await q('delete from docs where coll=$1 and id=$2',[req.params.c,req.params.id]);res.json({ok:1})});
+app.delete('/api/c/:c/:id',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);
+ if(req.params.c==='users'&&(await q("select 1 from admin_slots where user_id=$1",[req.params.id])).rowCount)return res.status(409).json({error:'Administrator accounts cannot be deleted.'});
+ await q('delete from docs where coll=$1 and id=$2',[req.params.c,req.params.id]);res.json({ok:1})});
 
 app.get('/api/ads/:id/video',async(req,res)=>{const ad=(await q("select data from docs where coll='ads' and id=$1",[req.params.id])).rows[0]?.data;
  if(!ad||(!adm(req.u)&&(!ad.approved||!ad.active))||!ad.videoId)return res.sendStatus(404);
@@ -260,7 +265,24 @@ app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u||!req.file||
 app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from files where id=$1',[req.params.id.replace(/\W/g,'')])).rows[0];
  if(!r||r.mime.startsWith('video/'))return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
+async function initializeAdmins(){
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  await c.query("select pg_advisory_xact_lock(hashtext('yangu-admin-accounts')::bigint)");
+  const slots=(await c.query('select slot from admin_slots')).rows;
+  if(!slots.length){
+   const users=(await c.query("select id from docs where coll='users' order by case when data->>'created' ~ '^[0-9]+$' then (data->>'created')::numeric else 0 end,id limit 2")).rows;
+   for(let i=0;i<users.length;i++)await c.query('insert into admin_slots(slot,user_id) values($1,$2)',[i+1,users[i].id]);
+  }
+  await c.query(`update docs u set data=jsonb_set(u.data,'{role}',to_jsonb(case when exists(select 1 from admin_slots s where s.user_id=u.id) then 'admin' else 'seller' end),true)
+   where u.coll='users' and u.data->>'role' is distinct from case when exists(select 1 from admin_slots s where s.user_id=u.id) then 'admin' else 'seller' end`);
+  await c.query('commit');
+ }catch(err){await c.query('rollback');throw err}finally{c.release()}
+}
 q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
  .then(()=>q('alter table signup_otps add column if not exists link_token_hash text, add column if not exists verified_at timestamptz'))
  .then(()=>q('create table if not exists profile_email_otps(account_id text primary key,target_email text not null,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)'))
+ .then(()=>q('create table if not exists admin_slots(slot smallint primary key check(slot in (1,2)),user_id text not null unique)'))
+ .then(initializeAdmins)
  .then(()=>app.listen(process.env.PORT||3000,()=>console.log('Yangu Market Stores running')));
