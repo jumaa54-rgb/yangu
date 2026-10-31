@@ -1,6 +1,15 @@
 const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
 const norm=e=>String(e||'').trim().toLowerCase();
+const validEmail=value=>{
+ if(typeof value!=='string'||value.length>254)return false;
+ const at=value.lastIndexOf('@');
+ if(at<1||at!==value.indexOf('@'))return false;
+ const local=value.slice(0,at),domain=value.slice(at+1);
+ if(local.length>64||domain.length>253||!/^[-A-Za-z0-9!#$%&'*+/=?^_`{|}~]+(?:\.[-A-Za-z0-9!#$%&'*+/=?^_`{|}~]+)*$/.test(local))return false;
+ const labels=domain.split('.');
+ return labels.length>1&&labels.every(label=>label.length<=63&&/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))&&labels[labels.length-1].length>=2&&/[A-Za-z]/.test(labels[labels.length-1]);
+};
 const ADMIN_EMAILS=new Set((process.env.ADMIN_EMAILS||'').split(',').map(norm).filter(Boolean));
 const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
@@ -70,7 +79,8 @@ app.post('/api/signup/verify-link',async(req,res)=>{
 
 app.post('/api/signup',async(req,res)=>{
  const{name,email,phone,password,q:qn,qa,termsAccepted,termsVersion}=req.body,e=norm(email);
- if(!name||!/^\S+@\S+\.\S+$/.test(e)||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid email, phone, 6+ character password).'});
+ if(!validEmail(e))return res.status(400).json({error:'Enter a valid email address (for example, name@example.com).'});
+ if(!name||String(phone||'').replace(/\D/g,'').length<9||String(password||'').length<6||!qa)return res.status(400).json({error:'Fill all fields correctly (valid phone, 6+ character password, and recovery answer).'});
  if(termsAccepted!==true||termsVersion!==TERMS_VERSION)return res.status(400).json({error:'Read and accept the current Terms and Conditions before creating an account.'});
  const c=await pool.connect();
  try{
