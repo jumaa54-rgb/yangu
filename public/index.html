@@ -116,7 +116,8 @@ input,select,textarea{border-radius:8px}
 .ad-popup-video{display:block;width:100%;max-height:55vh;background:#000;border-radius:8px;margin:12px 0}
 .ad-popup-content{position:relative;padding-top:24px}
 .ad-popup-close{position:absolute;top:0;right:0;width:38px;height:38px;padding:0;border:0;border-radius:50%;font-size:26px;line-height:1}
-.ad-popup-mute{position:absolute;right:48px;top:0;min-width:76px}
+.ad-popup-mute{position:absolute;right:48px;top:0;width:38px;height:38px;padding:8px;border:0;border-radius:50%}
+.ad-popup-mute svg{display:block;width:22px;height:22px;fill:currentColor}
 @media(max-width:480px){.basket-item{align-items:flex-start;gap:10px;padding:9px}.basket-item-picture{width:64px;height:64px;flex-basis:64px}.basket-item-actions{gap:6px}}
 </style></head><body>
 <a href="#app" class="skip-link">Skip to marketplace</a>
@@ -153,6 +154,7 @@ const shrink=f=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=
 const SOC=['facebook','instagram','tiktok','whatsapp','x','youtube'];
 const shr=(u,t)=>{const A1=encodeURIComponent(u),T=encodeURIComponent(t),M=encodeURIComponent(t+' '+u);return [['WhatsApp','https://wa.me/?text='+M],['Facebook','https://www.facebook.com/sharer/sharer.php?u='+A1],['X','https://twitter.com/intent/tweet?text='+T+'&url='+A1],['Telegram','https://t.me/share/url?url='+A1+'&text='+T],['LinkedIn','https://www.linkedin.com/sharing/share-offsite/?url='+A1],['Reddit','https://www.reddit.com/submit?url='+A1+'&title='+T],['Bluesky','https://bsky.app/intent/compose?text='+M],['Email','mailto:?subject='+T+'&body='+M]].map(([n,h])=>`<a class="btn" target="_blank" rel="noopener noreferrer" href="${h}">${n}</a>`).join('')};
 const social=()=>`<div class="box" style="margin-top:16px"><b>Follow and share Yangu Market</b><div class="row">${SOC.filter(k=>cfg.soc&&String(cfg.soc[k]||'').startsWith('https://')).map(k=>`<a class="btn p" target="_blank" rel="noopener" href="${esc(cfg.soc[k])}">${k[0].toUpperCase()+k.slice(1)}</a>`).join('')}</div><p class="mu" style="margin:10px 0 0">Share this site</p><div class="row" style="margin-top:4px">${shr(base(),'Yangu Market Stores – Bidhaa kwa bei yangu')}</div></div>`;
+const adMuteIcon=muted=>`<svg viewBox="0 0 24 24" aria-hidden="true">${muted?'<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.9 8.9 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-7.73l4.25 4.25c-.67.52-1.44.92-2.25 1.16v2.06c1.36-.31 2.6-.95 3.68-1.81L19.73 21 21 19.73 4.27 3zM12 4 9.91 6.09 12 8.18V4z"/>':'<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>'}</svg>`;
 const AD_POPUP_INTERVAL=10*60*1000;
 let adPopupTimer=null,adNextPopupAt=0;
 const scheduleAdPopup=delay=>{
@@ -171,7 +173,7 @@ const maybeShowAdPopup=()=>{
  adNextPopupAt=now+AD_POPUP_INTERVAL;
  scheduleAdPopup(AD_POPUP_INTERVAL);
  const videoSrc=ad.videoId||ad.hasVideo?`/api/ads/${encodeURIComponent(ad.id)}/video`:ad.videoUrl;
- modal(`<section class="ad-popup-content" data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle">${videoSrc?'<button class="ad-popup-mute" id="adMuteButton" type="button" data-act="toggleAdMute" aria-label="Unmute video">Unmute</button>':''}<button class="ad-popup-close" type="button" data-act="close" aria-label="Close advertisement" title="Close advertisement">×</button><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status" hidden></p>`:''}${ad.linkUrl?`<div class="row"><a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Visit sponsor</a></div>`:''}</section>`);
+ modal(`<section class="ad-popup-content" data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle">${videoSrc?`<button class="ad-popup-mute" id="adMuteButton" type="button" data-act="toggleAdMute" aria-label="Unmute video" title="Unmute">${adMuteIcon(true)}</button>`:''}<button class="ad-popup-close" type="button" data-act="close" aria-label="Close advertisement" title="Close advertisement">×</button><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status" hidden></p>`:''}${ad.linkUrl?`<div class="row"><a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Visit sponsor</a></div>`:''}</section>`);
  $('#mb').style.maxWidth='760px';
  $('#mb .ad-popup-close').focus();
  const video=$('#mb video');
@@ -267,7 +269,7 @@ const setMe=u=>{me=u;try{u?localStorage.setItem('ym_e',u.email):localStorage.rem
 let zIds=[],zI=0;
 const showZ=()=>{modal(`<div style="text-align:center"><img src="/_blob/${esc(zIds[zI])}" style="max-width:100%;max-height:70vh;object-fit:contain" alt=""><div class="row" style="justify-content:center;align-items:center">${zIds.length>1?`<button data-act="zprev">‹</button><span class="mu">${zI+1} / ${zIds.length}</span><button data-act="znext">›</button>`:''}<button data-act="close">Close</button></div></div>`);$('#mb').style.maxWidth='900px'};
 const A={
- home(){view='home';q='';cat='';sub='';render();maybeShowAdPopup()},close:closeM,toggleAdMute(t){const video=$('#mb [data-ad-popup] video');if(!video)return;video.muted=!video.muted;t.textContent=video.muted?'Unmute':'Mute';t.setAttribute('aria-label',video.muted?'Unmute video':'Mute video')},login:()=>authForm('login'),signup:()=>authForm('signup'),
+ home(){view='home';q='';cat='';sub='';render();maybeShowAdPopup()},close:closeM,toggleAdMute(t){const video=$('#mb [data-ad-popup] video');if(!video)return;video.muted=!video.muted;t.innerHTML=adMuteIcon(video.muted);t.title=video.muted?'Unmute':'Mute';t.setAttribute('aria-label',video.muted?'Unmute video':'Mute video')},login:()=>authForm('login'),signup:()=>authForm('signup'),
  toggleMenu(t){const m=$('#serviceMenu'),open=m.hidden;m.hidden=!open;t.setAttribute('aria-expanded',String(open))},
  findNearby(t){
   if(!navigator.geolocation){buyerLocationMessage='Location is not supported by this browser.';render();return}
