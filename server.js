@@ -1,6 +1,7 @@
 const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
 const norm=e=>String(e||'').trim().toLowerCase();
+const ANTHROPIC_API_KEY=process.env.ANTHROPIC_API_KEY,ANTHROPIC_MODEL=process.env.ANTHROPIC_MODEL||'claude-haiku-5-5';
 const validEmail=value=>{
  if(typeof value!=='string'||value.length>254)return false;
  const at=value.lastIndexOf('@');
@@ -103,6 +104,31 @@ app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getU
  sign(res,e);res.json(pub(u))});
 app.post('/api/logout',(req,res)=>{res.clearCookie('t');res.json({ok:1})});
 app.get('/api/me',(req,res)=>res.json(req.u?pub(req.u):null));
+app.post('/api/ai-assist',async(req,res)=>{
+ const{mode}=req.body||{},message=typeof req.body?.message==='string'?req.body.message.trim():'';
+ if(!['buyer','seller'].includes(mode)||!message||message.length>1000)return res.status(400).json({error:'Choose buyer or seller help and enter a message of up to 1,000 characters.'});
+ if(mode==='seller'&&!req.u)return res.status(401).json({error:'Log in to use seller assistance.'});
+ if(!ANTHROPIC_API_KEY)return res.status(503).json({error:'AI assistance is not configured yet. Please try again later.'});
+ const catalog=(await q(`select id,data from docs where coll='products'
+  order by case when $1::text is not null and data->>'email'=$1 then 0 else 1 end,
+  case when data->>'created' ~ '^[0-9]{1,15}$' then (data->>'created')::bigint else 0 end desc,id limit 60`,[mode==='seller'?req.u.email:null])).rows
+  .filter(row=>typeof row.data.title==='string'&&row.data.title.trim())
+  .map(row=>({id:row.id,title:String(row.data.title).slice(0,120),price:Number.isFinite(Number(row.data.price))?Number(row.data.price):null,
+   category:String(row.data.cat||''),subcategory:String(row.data.sub||''),description:String(row.data.desc||'').slice(0,160)}));
+ const system=mode==='buyer'
+  ?'You are Yangu Market Stores’ helpful buyer assistant for a Kenyan marketplace. Use KSh for prices. Recommend only from the provided live listing catalogue, never invent listings, stock, seller details, or specifications. Offer practical buying advice and remind the user to confirm availability and details with the seller. Return valid JSON only with this shape: {"reply":"short helpful answer","productIds":["matching listing ids, best first, maximum 5"]}. Use an empty productIds array when no listing fits.'
+  :'You are Yangu Market Stores’ practical coach for local marketplace sellers in Kenya. Help with listing quality, honest product descriptions, pricing considerations, customer communication, and how to use the marketplace. Use only facts supplied by the seller or the catalogue; never invent product features or claim a sale is guaranteed. Return valid JSON only with this shape: {"reply":"helpful answer","productIds":["relevant example listing ids, maximum 5"]}. Use an empty productIds array when no examples help.';
+ try{
+  const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'},
+   body:JSON.stringify({model:ANTHROPIC_MODEL,max_tokens:700,system,messages:[{role:'user',content:`Marketplace listings (JSON): ${JSON.stringify(catalog)}\n\n${mode==='seller'?'The seller’s own listings appear first when available. ':''}Question: ${message}`} ]})});
+  if(!response.ok){console.error('AI provider request failed with status',response.status);return res.status(502).json({error:'AI assistance could not respond right now. Please try again.'})}
+  const result=await response.json(),text=result.content?.filter(item=>item.type==='text').map(item=>item.text).join('').trim();
+  let answer;try{answer=JSON.parse(text)}catch{return res.status(502).json({error:'AI assistance returned an unreadable response. Please try again.'})}
+  if(typeof answer.reply!=='string')return res.status(502).json({error:'AI assistance returned an incomplete response. Please try again.'});
+  const ids=new Set(catalog.map(item=>item.id)),productIds=Array.isArray(answer.productIds)?answer.productIds.filter(id=>typeof id==='string'&&ids.has(id)).slice(0,5):[];
+  res.json({reply:answer.reply.slice(0,2000),productIds});
+ }catch(err){console.error('AI provider request failed:',err.name||'Error');res.status(502).json({error:'AI assistance could not connect right now. Please try again.'})}
+});
 const profileOf=u=>({name:u.name,email:u.email,emailVerified:u.emailVerified===true,phone:u.phone,recoveryEmail:u.recoveryEmail||'',recoveryPhone:u.recoveryPhone||'',avatarId:u.avatarId||''});
 app.get('/api/profile',(req,res)=>req.u?res.json(profileOf(req.u)):res.sendStatus(401));
 app.post('/api/profile/update',async(req,res)=>{
