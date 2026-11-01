@@ -14,8 +14,7 @@ const validEmail=value=>{
 const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
 const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
-const PUBLIC_URL=process.env.PUBLIC_URL||process.env.RENDER_EXTERNAL_URL||'http://localhost:3000';
-const TERMS_VERSION='2026-10-30';
+const TERMS_VERSION='2026-11-01';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
@@ -29,7 +28,7 @@ app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,S
 
 app.post('/api/signup/send-code',async(req,res)=>{
  const e=norm(req.body.email);
- if(!/^\S+@\S+\.\S+$/.test(e))return res.status(400).json({error:'Enter a valid email address.'});
+ if(!validEmail(e))return res.status(400).json({error:'Enter a valid email address.'});
  if((await q("select 1 from docs where coll='users' and (lower(data->>'email')=$1 or lower(data->>'recoveryEmail')=$1) limit 1",[e])).rowCount)return res.status(409).json({error:'This email is already in use by an account.'});
  if(!mail)return res.status(503).json({error:'Email verification is not configured. Contact the site administrator.'});
  const code=String(crypto.randomInt(0,1000000)).padStart(6,'0'),c=await pool.connect();
@@ -43,17 +42,15 @@ app.post('/api/signup/send-code',async(req,res)=>{
   if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
    await c.query('rollback');return res.status(429).json({error:'Please wait a minute before requesting another code.'});
   }
-  const linkToken=crypto.randomBytes(32).toString('base64url'),verifyUrl=new URL('/',PUBLIC_URL);
-  verifyUrl.hash=new URLSearchParams({verify:linkToken}).toString();
   await mail.sendMail({
    from:SMTP_FROM,to:e,subject:'Verify your Yangu email address',
-   text:`Your Yangu verification code is ${code}. It expires in 10 minutes.\n\nOr verify your email and continue signing up by opening this link:\n${verifyUrl}`,
-   html:`<p>Your Yangu verification code is <strong>${code}</strong>. It expires in 10 minutes.</p><p>Or <a href="${verifyUrl}">verify your email and continue signing up</a>.</p>`
+   text:`Your Yangu verification code is ${code}. It expires in 10 minutes.`,
+   html:`<p>Your Yangu verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`
   });
   await c.query(`insert into signup_otps(email,code_hash,link_token_hash,verified_at,expires_at,sent_at,attempts)
-   values($1,$2,$3,null,now()+interval '10 minutes',now(),0)
-   on conflict(email) do update set code_hash=excluded.code_hash,link_token_hash=excluded.link_token_hash,verified_at=null,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
-   [e,otpHash(code),otpHash(linkToken)]);
+   values($1,$2,null,null,now()+interval '10 minutes',now(),0)
+   on conflict(email) do update set code_hash=excluded.code_hash,link_token_hash=null,verified_at=null,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
+   [e,otpHash(code)]);
   await c.query('commit');res.json({ok:true});
  }catch(x){await c.query('rollback');console.error(x);res.status(503).json({error:'Could not send a verification code. Check the email address or try again later.'})}
  finally{c.release()}});
@@ -77,6 +74,29 @@ app.post('/api/signup/verify-link',async(req,res)=>{
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Could not verify the email link.'})}
  finally{c.release()}});
 
+app.post('/api/signup/verify-code',async(req,res)=>{
+ const e=norm(req.body.email),code=String(req.body.code||'').trim();
+ if(!validEmail(e)||!/^\d{6}$/.test(code))return res.status(400).json({error:'Enter your email and the six-digit verification code.'});
+ const c=await pool.connect();
+ try{
+  await c.query('begin');
+  const verification=(await c.query('select code_hash,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
+  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
+   await c.query('rollback');return res.status(400).json({error:'This verification code is invalid or expired. Request a new code.'});
+  }
+  if(verification.attempts>=5){
+   await c.query('rollback');return res.status(429).json({error:'Too many incorrect attempts. Request a new verification code.'});
+  }
+  const supplied=Buffer.from(otpHash(code),'hex'),expected=Buffer.from(verification.code_hash,'hex');
+  if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected)){
+   await c.query('update signup_otps set attempts=attempts+1 where email=$1',[e]);
+   await c.query('commit');return res.status(400).json({error:'That verification code is incorrect.'});
+  }
+  await c.query('update signup_otps set verified_at=now() where email=$1',[e]);
+  await c.query('commit');res.json({ok:true,email:e});
+ }catch(err){await c.query('rollback');console.error(err);res.status(500).json({error:'Could not verify the email code.'})}
+ finally{c.release()}});
+
 app.post('/api/signup',async(req,res)=>{
  const{name,email,phone,password,q:qn,qa,termsAccepted,termsVersion}=req.body,e=norm(email);
  if(!validEmail(e))return res.status(400).json({error:'Enter a valid email address (for example, name@example.com).'});
@@ -87,15 +107,20 @@ app.post('/api/signup',async(req,res)=>{
   await c.query('begin');
   await c.query("select pg_advisory_xact_lock(hashtext('yangu-admin-accounts')::bigint)");
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
+  const verification=(await c.query('select verified_at,expires_at from signup_otps where email=$1 for update',[e])).rows[0];
+  if(!verification||!verification.verified_at||new Date(verification.expires_at).getTime()<=Date.now()){
+   await c.query('rollback');return res.status(400).json({error:'Verify your email address before creating an account.'});
+  }
   if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
    await c.query('commit');
    return res.status(409).json({error:'This email is already in use by an account.'});
   }
   const slots=(await c.query('select slot from admin_slots')).rows.map(row=>row.slot),adminSlot=[1,2].find(slot=>!slots.includes(slot));
   const role=adminSlot?'admin':'seller';
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role,created:Date.now()}]);
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:true,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role,created:Date.now()}]);
   if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
   if(adminSlot)await c.query('insert into admin_slots(slot,user_id) values($1,$2)',[adminSlot,hex(e)]);
+  await c.query('delete from signup_otps where email=$1',[e]);
   await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
