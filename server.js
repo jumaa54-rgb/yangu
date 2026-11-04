@@ -20,7 +20,7 @@ const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
 const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
 const videoUp=multer({storage:multer.memoryStorage(),limits:{fileSize:20*1024*1024}});
-const sign=(res,e,u)=>res.cookie('t',jwt.sign({e,v:u?.authVersion||0},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
+const sign=(res,e,u,mfa=false)=>res.cookie('t',jwt.sign({e,v:u?.authVersion||0,...(adm(u)?{mfa}: {})},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
 const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role,avatarId:u.avatarId||''}),adm=u=>u&&u.role==='admin';
 const imageSignatures={
  'image/jpeg':buffer=>buffer.length>=3&&buffer[0]===0xff&&buffer[1]===0xd8&&buffer[2]===0xff,
@@ -31,10 +31,42 @@ const imageSignatures={
 const safeImage=file=>file&&imageSignatures[file.mimetype]?.(file.buffer)===true;
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
 const otpHash=code=>crypto.createHmac('sha256',SECRET).update(code).digest('hex');
-const updatePassword=async(e,hash)=>q(`update docs set data=jsonb_set(
- jsonb_set(data,'{hash}',to_jsonb($1::text),true),
- '{authVersion}',to_jsonb(coalesce(nullif(data->>'authVersion','')::int,0)+1),true)
- where coll='users' and id=$2`,[hash,hex(e)]);
+const encodeBase32=buffer=>{
+ const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,value=0,out='';
+ for(const byte of buffer){value=(value<<8)|byte;bits+=8;while(bits>=5){out+=alphabet[(value>>>(bits-5))&31];bits-=5}}
+ if(bits)out+=alphabet[(value<<(5-bits))&31];
+ return out
+};
+const decodeBase32=text=>{
+ const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,value=0,out=[];
+ for(const char of String(text||'').toUpperCase().replace(/=+$/,'')){const digit=alphabet.indexOf(char);if(digit<0)return Buffer.alloc(0);value=(value<<5)|digit;bits+=5;if(bits>=8){out.push((value>>>(bits-8))&255);bits-=8}}
+ return Buffer.from(out)
+};
+const totpCounter=(secret,code,now=Date.now())=>{
+ if(!/^\d{6}$/.test(String(code||'')))return null;
+ const key=decodeBase32(secret);if(!key.length)return null;
+ const current=Math.floor(now/30000);
+ for(const counter of [current-1,current,current+1]){
+  const message=Buffer.alloc(8);message.writeBigUInt64BE(BigInt(counter));
+  const digest=crypto.createHmac('sha1',key).update(message).digest(),offset=digest[digest.length-1]&15;
+  const binary=((digest[offset]&127)<<24)|(digest[offset+1]<<16)|(digest[offset+2]<<8)|digest[offset+3];
+  const expected=Buffer.from(String(binary%1e6).padStart(6,'0'));
+  if(crypto.timingSafeEqual(expected,Buffer.from(String(code))))return counter;
+ }
+ return null
+};
+const updatePassword=async(e,hash)=>{
+ const connection=await pool.connect();
+ try{
+  await connection.query('begin');
+  await connection.query('delete from admin_login_challenges where user_id=$1',[hex(e)]);
+  const result=await connection.query(`update docs set data=jsonb_set(
+   jsonb_set(data,'{hash}',to_jsonb($1::text),true),
+   '{authVersion}',to_jsonb(coalesce(nullif(data->>'authVersion','')::int,0)+1),true)
+   where coll='users' and id=$2`,[hash,hex(e)]);
+  await connection.query('commit');return result
+ }catch(error){await connection.query('rollback');throw error}finally{connection.release()}
+};
 app.use((req,res,next)=>{
  res.set('X-Content-Type-Options','nosniff').set('X-Frame-Options','DENY').set('Referrer-Policy','strict-origin-when-cross-origin')
   .set('Permissions-Policy','geolocation=(self)');
@@ -43,7 +75,7 @@ app.use((req,res,next)=>{
 });
 app.use(async(req,res,next)=>{try{
  const token=jwt.verify(req.cookies.t,SECRET),user=await getUser(token.e);
- req.u=user&&Number(token.v||0)===Number(user.authVersion||0)?user:null;
+ req.u=user&&Number(token.v||0)===Number(user.authVersion||0)&&(!adm(user)||(token.mfa===true&&user.totpEnabled===true))?user:null;
 }catch{req.u=null}next()});
 
 app.post('/api/signup',async(req,res)=>{
@@ -63,11 +95,83 @@ app.post('/api/signup',async(req,res)=>{
   if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
   await c.query('commit');const user=await getUser(e);sign(res,e,user);res.json(pub(user));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
-app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
+const adminMfaCookie={httpOnly:true,sameSite:'strict',secure:prod,maxAge:5*60*1000,path:'/api/admin/mfa'};
+const clearAdminMfaCookie=res=>res.clearCookie('admin_mfa_challenge',{path:adminMfaCookie.path});
+app.post('/api/login',async(req,res)=>{clearAdminMfaCookie(res);const e=norm(req.body.email),u=await getUser(e);
  if(!u)return res.status(404).json({error:'No account with that email.'});
  if(!await bcrypt.compare(String(req.body.password||''),u.hash))return res.status(401).json({error:'Wrong password.'});
+ if(adm(u)){
+  const token=crypto.randomBytes(32).toString('base64url');
+  await q('delete from admin_login_challenges where expires_at<=now() or user_id=$1',[hex(e)]);
+  await q('insert into admin_login_challenges(token_hash,user_id,expires_at) values($1,$2,$3)',[otpHash(token),hex(e),new Date(Date.now()+5*60*1000)]);
+  res.clearCookie('t');res.cookie('admin_mfa_challenge',token,adminMfaCookie);
+  return res.json({mfaRequired:true,setupRequired:u.totpEnabled!==true});
+ }
  sign(res,e,u);res.json(pub(u))});
-app.post('/api/logout',(req,res)=>{res.clearCookie('t');res.json({ok:1})});
+const getAdminMfaChallenge=async req=>{
+ const token=req.cookies.admin_mfa_challenge;
+ if(!token)return null;
+ return(await q('select token_hash,user_id,attempts from admin_login_challenges where token_hash=$1 and expires_at>now() and attempts<5',[otpHash(token)])).rows[0]||null
+};
+app.post('/api/admin/mfa/setup',async(req,res)=>{
+ const challenge=await getAdminMfaChallenge(req);
+ if(!challenge){clearAdminMfaCookie(res);return res.status(401).json({error:'Your administrator sign-in has expired. Enter your password again.'})}
+ const email=Buffer.from(challenge.user_id,'hex').toString(),user=await getUser(email);
+ if(!adm(user)){clearAdminMfaCookie(res);return res.sendStatus(403)}
+ if(user.totpEnabled===true)return res.status(409).json({error:'An authenticator is already set up. Enter its current code.'});
+ const secret=user.totpPendingSecret||encodeBase32(crypto.randomBytes(20));
+ if(!user.totpPendingSecret)await q("update docs set data=jsonb_set(data,'{totpPendingSecret}',to_jsonb($1::text),true) where coll='users' and id=$2",[secret,challenge.user_id]);
+ const label=encodeURIComponent(`Yangu Market Stores:${email}`),issuer=encodeURIComponent('Yangu Market Stores');
+ res.json({secret,otpauthUrl:`otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`});
+});
+app.post('/api/admin/mfa/verify',async(req,res)=>{
+ const connection=await pool.connect();
+ try{
+  await connection.query('begin');
+  const challenge=(await connection.query('select token_hash,user_id,attempts from admin_login_challenges where token_hash=$1 and expires_at>now() and attempts<5 for update',[otpHash(req.cookies.admin_mfa_challenge||'')])).rows[0];
+  if(!challenge){await connection.query('rollback');clearAdminMfaCookie(res);return res.status(401).json({error:'Your administrator sign-in has expired. Enter your password again.'})}
+  const row=(await connection.query("select data from docs where coll='users' and id=$1 for update",[challenge.user_id])).rows[0],user=row?.data;
+  if(!adm(user)){await connection.query('delete from admin_login_challenges where token_hash=$1',[challenge.token_hash]);await connection.query('commit');clearAdminMfaCookie(res);return res.sendStatus(403)}
+  const isEnabled=user.totpEnabled===true,secret=isEnabled?user.totpSecret:user.totpPendingSecret,counter=totpCounter(secret,req.body?.code);
+  if(counter===null||counter<=Number(user.totpLastCounter??-1)){
+   const attempts=Number(challenge.attempts)+1;
+   if(attempts>=5)await connection.query('delete from admin_login_challenges where token_hash=$1',[challenge.token_hash]);
+   else await connection.query('update admin_login_challenges set attempts=$1 where token_hash=$2',[attempts,challenge.token_hash]);
+   await connection.query('commit');if(attempts>=5)clearAdminMfaCookie(res);
+   return res.status(attempts>=5?429:401).json({error:attempts>=5?'Too many incorrect codes. Enter your password again.':'Enter the current six-digit code from your authenticator app.'})
+  }
+  const update=isEnabled
+   ?await connection.query("update docs set data=jsonb_set(data,'{totpLastCounter}',to_jsonb($1::bigint),true) where coll='users' and id=$2 returning data",[counter,challenge.user_id])
+   :await connection.query(`update docs set data=(data-'totpPendingSecret')||jsonb_build_object(
+     'totpSecret',$1::text,'totpEnabled',true,'totpLastCounter',$2::bigint,
+     'authVersion',coalesce(nullif(data->>'authVersion','')::int,0)+1)
+     where coll='users' and id=$3 returning data`,[secret,counter,challenge.user_id]);
+  await connection.query('delete from admin_login_challenges where token_hash=$1',[challenge.token_hash]);
+  await connection.query('commit');clearAdminMfaCookie(res);
+  const authenticated=update.rows[0].data;sign(res,authenticated.email,authenticated,true);res.json(pub(authenticated));
+ }catch(error){await connection.query('rollback');throw error}finally{connection.release()}
+});
+app.post('/api/admin/mfa/reset',async(req,res)=>{
+ if(!adm(req.u))return res.sendStatus(403);
+ const email=norm(req.body.email);
+ if(email===req.u.email)return res.status(400).json({error:'Ask another administrator to reset your authenticator.'});
+ const connection=await pool.connect();
+ try{
+  await connection.query('begin');
+  await connection.query('delete from admin_login_challenges where user_id=$1',[hex(email)]);
+  const result=await connection.query(`update docs set data=(data-'totpSecret'-'totpPendingSecret'-'totpLastCounter')||jsonb_build_object(
+   'totpEnabled',false,'authVersion',coalesce(nullif(data->>'authVersion','')::int,0)+1)
+   where coll='users' and id=$1 and data->>'role'='admin' returning 1`,[hex(email)]);
+  await connection.query('commit');
+  if(!result.rowCount)return res.status(404).json({error:'No administrator account with that email.'});
+  res.json({ok:true});
+ }catch(error){await connection.query('rollback');throw error}finally{connection.release()}
+});
+app.post('/api/logout',async(req,res)=>{
+ res.clearCookie('t');
+ if(req.cookies.admin_mfa_challenge)await q('delete from admin_login_challenges where token_hash=$1',[otpHash(req.cookies.admin_mfa_challenge)]);
+ clearAdminMfaCookie(res);res.json({ok:1})
+});
 app.get('/api/me',(req,res)=>res.json(req.u?pub(req.u):null));
 app.post('/api/ai-assist',async(req,res)=>{
  const{mode}=req.body||{},message=typeof req.body?.message==='string'?req.body.message.trim():'';
@@ -208,7 +312,7 @@ app.post('/api/admin/reset',async(req,res)=>{
  res.json({temp})
 });
 
-const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r,publicAd=d=>({...d,hasVideo:!!d.videoId,videoId:undefined});
+const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,totpSecret,totpPendingSecret,totpLastCounter,...r})=>r,publicAd=d=>({...d,hasVideo:!!d.videoId,videoId:undefined});
 app.use('/api/c/:c',(req,res,next)=>COLL.includes(req.params.c)?next():res.sendStatus(404));
 app.get('/api/c/:c',async(req,res)=>{const c=req.params.c;if(c==='users'&&!adm(req.u))return res.sendStatus(403);
  const rows=(await q('select id,data from docs where coll=$1',[c])).rows;
@@ -279,6 +383,7 @@ async function initializeAdmins(){
 }
 q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea)')
  .then(()=>q('create table if not exists profile_email_otps(account_id text primary key,target_email text not null,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)'))
+ .then(()=>q('create table if not exists admin_login_challenges(token_hash text primary key,user_id text not null,expires_at timestamptz not null,attempts integer not null default 0)'))
  .then(()=>q('create table if not exists admin_slots(slot smallint primary key check(slot in (1,2)),user_id text not null unique)'))
  .then(initializeAdmins)
  .then(()=>app.listen(process.env.PORT||3000,()=>console.log('Yangu Market Stores running')));

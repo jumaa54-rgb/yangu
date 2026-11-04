@@ -22,7 +22,27 @@ document.addEventListener('input',e=>{
  if(message){e.target.setAttribute('aria-invalid',String(!!value&&!valid));message.textContent=value&&!valid?'Enter a valid email address, such as name@example.com.':''}
 });
 A.help=()=>modal(`<h3>Need help?</h3><p>For sign-up or account problems, contact the first administrator.</p><div class="row"><a class="btn p" href="mailto:${SUPPORT_EMAIL}">Email ${SUPPORT_EMAIL}</a><a class="btn" href="tel:${SUPPORT_PHONE}">Call ${SUPPORT_PHONE}</a><a class="btn" href="https://wa.me/${SUPPORT_PHONE.replace(/\D/g,'')}">WhatsApp</a></div><p class="mu">For product suggestions, use <b>✨ Ask AI</b>.</p>`);
-A.dologin=async()=>afterAuth(await J('/api/login',{email:val('e'),password:$('#pw').value}));
+const adminMfaPrompt=(setup,data={})=>modal(`<h3>${setup?'Set up administrator sign-in':'Administrator verification'}</h3>${setup?`<p class="mu">Add Yangu Market Stores to an authenticator app such as Google Authenticator, Microsoft Authenticator, or Authy. Enter this setup key in the app, then type the current six-digit code below.</p><label>Setup key</label><input value="${esc(data.secret)}" readonly aria-label="Authenticator setup key"><p><a href="${esc(data.otpauthUrl)}">Open in authenticator app</a></p>`:'<p class="mu">Enter the current six-digit code from your authenticator app.</p>'}<label for="adminMfaCode">Authenticator code</label><input id="adminMfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-label="Six-digit authenticator code"><div class="er" id="er"></div><div class="row"><button class="p" data-act="verifyAdminMfa">${setup?'Verify and finish setup':'Verify and log in'}</button></div>`);
+A.dologin=async()=>{
+ let r;try{r=await J('/api/login',{email:val('e'),password:$('#pw').value})}catch{return setErr('Could not log in. Try again.')}
+ if(!r.ok)return setErr(r.d.error||'Could not log in. Try again.');
+ if(!r.d.mfaRequired)return afterAuth(r);
+ if(r.d.setupRequired){let setup;try{setup=await J('/api/admin/mfa/setup')}catch{return setErr('Could not start authenticator setup. Enter your password again.')}
+  if(!setup.ok)return setErr(setup.d.error||'Could not start authenticator setup.');return adminMfaPrompt(true,setup.d)}
+ adminMfaPrompt(false);
+};
+A.verifyAdminMfa=async()=>{
+ const code=$('#adminMfaCode').value.replace(/\D/g,'').slice(0,6);$('#adminMfaCode').value=code;
+ if(code.length!==6)return setErr('Enter the six-digit code from your authenticator app.');
+ let r;try{r=await J('/api/admin/mfa/verify',{code})}catch{return setErr('Could not verify the code. Try again.')}
+ if(!r.ok)return setErr(r.d.error||'The code could not be verified.');
+ afterAuth(r);
+};
+A.resetAdminMfa=async t=>{
+ if(!confirm(`Reset the authenticator for ${t.dataset.email}? They will need to set it up again at their next login.`))return;
+ let r;try{r=await J('/api/admin/mfa/reset',{email:t.dataset.email})}catch{return alert('Could not reset the authenticator. Try again.')}
+ alert(r.ok?'Authenticator reset. The administrator must enroll a new authenticator at next login.':r.d.error||'Could not reset the authenticator.');
+};
 A.fstep=async()=>{const r=await J('/api/forgot',{email:val('e')});if(!r.ok)return setErr(r.d.error||'Try again.');
  modal(`<h3>Reset password</h3><p class="mu">${esc(r.d.q)}</p><input type="hidden" id="e" value="${esc(val('e'))}"><label>Answer</label><input id="qa"><label>New password</label><input id="pw" type="password"><div class="er" id="er"></div><div class="row"><button class="p" data-act="fdone">Reset</button></div>`)};
 A.fdone=async()=>{const r=await J('/api/reset',{email:val('e'),qa:val('qa'),password:$('#pw').value});if(!r.ok)return setErr(r.d.error||'Try again.');
