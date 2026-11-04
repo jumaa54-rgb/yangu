@@ -71,7 +71,7 @@ A.removeProfilePhoto=async()=>{
  if(!r.ok){const m=$('#profileMessage');if(m)m.textContent=d.error||'Could not remove profile photo.';return}
  profile.avatarId='';me={...me,avatarId:''};render();
 };
-{const o=A.logout;A.logout=()=>{J('/api/logout');profile=null;profileEmailPending=false;recoveryEmailTarget='';o()}}
+{const o=A.logout;A.logout=()=>{J('/api/logout');admin=false;profile=null;profileEmailPending=false;recoveryEmailTarget='';o()}}
 fetch('/api/me').then(r=>r.json()).then(u=>{if(u){me={email:u.email,name:u.name,phone:u.phone,avatarId:u.avatarId||''};render()}}).catch(()=>{});
 document.addEventListener('input',e=>{
  const input=e.target.closest('[data-otp-group]');if(!input)return;
