@@ -2,61 +2,24 @@ const J=(u,b)=>fetch(u,{method:'POST',headers:{'content-type':'application/json'
 const SUPPORT_EMAIL='jumaaustine544@gmail.com',SUPPORT_PHONE='+254769673466';
 const supportLinks=()=>`<p class="mu">Need help? First administrator: <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a> · <a href="tel:${SUPPORT_PHONE}">Call ${SUPPORT_PHONE}</a> · <a href="https://wa.me/${SUPPORT_PHONE.replace(/\D/g,'')}">WhatsApp</a></p>`;
 const afterAuth=r=>{if(!r.ok)return setErr(r.d.error||'Something went wrong. Try again.');me=r.d;profile=null;profileLoadError='';closeM();if(r.d.role==='admin'&&!admin)location.reload();else render()};
-const TERMS_VERSION='2026-11-01';
+const TERMS_VERSION='2026-11-04';
 const otpFields=group=>`<div class="otp-digits"><input id="${group}Otp" class="otp-entry" data-otp-group="${group}" type="text" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="Six-digit verification code"></div>`;
 const otpValue=group=>document.querySelector(`[data-otp-group="${group}"]`)?.value||'';
-let signupPendingEmail='',signupVerifiedEmail='';
 const openSignup=A.signup;
-A.signup=()=>{signupPendingEmail='';signupVerifiedEmail='';return openSignup()};
-A.sendSignupCode=async()=>{
- const email=val('e').toLowerCase(),status=$('#signupEmailStatus'),wrap=$('#signupOtpWrap');
- if(!validEmail(email)){if(status)status.textContent='Enter a valid email address first.';return}
- if(signupVerifiedEmail===email){if(status)status.textContent='This email is already verified.';return}
- if(status)status.textContent='Sending verification code…';
- let r;try{r=await J('/api/signup/send-code',{email})}catch{if(status)status.textContent='Could not send the code. Check your connection and try again.';return}
- if(!r.ok){if(status)status.textContent=r.d.error||'Could not send the verification code.';return}
- signupPendingEmail=email;if(wrap)wrap.hidden=false;
- if(status)status.textContent='Code sent. Check your inbox and spam folder; it expires in 10 minutes.';
-};
-A.verifySignupCode=async()=>{
- const email=val('e').toLowerCase(),code=val('signupOtp'),status=$('#signupEmailStatus');
- if(!signupPendingEmail||signupPendingEmail!==email){if(status)status.textContent='Send a code to this email address first.';return}
- if(!/^\d{6}$/.test(code)){if(status)status.textContent='Enter the six-digit verification code.';return}
- if(status)status.textContent='Verifying email…';
- let r;try{r=await J('/api/signup/verify-code',{email,code})}catch{if(status)status.textContent='Could not verify the code. Check your connection and try again.';return}
- if(!r.ok){if(status)status.textContent=r.d.error||'Could not verify this email.';return}
- signupVerifiedEmail=email;signupPendingEmail='';
- const wrap=$('#signupOtpWrap');if(wrap)wrap.hidden=true;
- if(status)status.textContent='Email verified. You can finish creating your account.';
-};
+A.signup=()=>openSignup();
 A.dosignup=async()=>{
  const data={name:val('n'),email:val('e').trim().toLowerCase(),phone:val('ph'),password:$('#pw').value,q:$('#q').value,qa:val('qa'),termsAccepted:$('#termsAccepted')?.checked===true,termsVersion:TERMS_VERSION};
  if(!validEmail(data.email))return setErr('Enter a valid email address (for example, name@example.com).');
- if(signupVerifiedEmail!==data.email)return setErr('Verify your email address before creating an account.');
  if(!data.name||data.phone.replace(/\D/g,'').length<9||data.password.length<6||!data.qa)return setErr('Fill all fields correctly (valid phone, 6+ character password, and recovery answer).');
  if(!data.termsAccepted)return setErr('Please read and accept the Terms and Conditions to create your account.');
  let r;try{r=await J('/api/signup',data)}catch{const e=$('#er');if(e)e.innerHTML=`Could not create the account. Try again. ${supportLinks()}`;return}
- if(!r.ok){
-  if((r.d.error||'').includes('Verify your email address')){
-   signupVerifiedEmail='';signupPendingEmail=data.email;
-   const wrap=$('#signupOtpWrap'),status=$('#signupEmailStatus');
-   if(wrap)wrap.hidden=false;
-   if(status)status.textContent='The code expired. Request a new code and verify this email again.';
-  }
-  const e=$('#er');if(e)e.innerHTML=`${esc(r.d.error||'Could not create the account.')} ${supportLinks()}`;return
- }
+ if(!r.ok){const e=$('#er');if(e)e.innerHTML=`${esc(r.d.error||'Could not create the account.')} ${supportLinks()}`;return}
  afterAuth(r);
 };
 document.addEventListener('input',e=>{
- if(e.target.id==='signupOtp'){e.target.value=e.target.value.replace(/\D/g,'').slice(0,6);return}
  if(e.target.id!=='e')return;
  const value=e.target.value.trim(),valid=validEmail(value),message=$('#emailValidation');
  if(message){e.target.setAttribute('aria-invalid',String(!!value&&!valid));message.textContent=value&&!valid?'Enter a valid email address, such as name@example.com.':''}
- if($('#signupEmailStatus')&&signupVerifiedEmail&&value.toLowerCase()!==signupVerifiedEmail){
-  signupVerifiedEmail='';signupPendingEmail='';
-  $('#signupEmailStatus').textContent='Email changed; verify this address before signing up.';
-  $('#signupOtpWrap').hidden=true;
- }
 });
 A.help=()=>modal(`<h3>Need help?</h3><p>For sign-up or account problems, contact the first administrator.</p><div class="row"><a class="btn p" href="mailto:${SUPPORT_EMAIL}">Email ${SUPPORT_EMAIL}</a><a class="btn" href="tel:${SUPPORT_PHONE}">Call ${SUPPORT_PHONE}</a><a class="btn" href="https://wa.me/${SUPPORT_PHONE.replace(/\D/g,'')}">WhatsApp</a></div><p class="mu">For product suggestions, use <b>✨ Ask AI</b>.</p>`);
 A.dologin=async()=>afterAuth(await J('/api/login',{email:val('e'),password:$('#pw').value}));

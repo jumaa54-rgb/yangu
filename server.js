@@ -14,88 +14,37 @@ const validEmail=value=>{
 const prod=process.env.NODE_ENV==='production';
 const SMTP_HOST=process.env.SMTP_HOST,SMTP_PORT=Number(process.env.SMTP_PORT||587),SMTP_USER=process.env.SMTP_USER,SMTP_PASS=process.env.SMTP_PASS,SMTP_FROM=process.env.SMTP_FROM||SMTP_USER;
 const mail=SMTP_HOST&&SMTP_USER&&SMTP_PASS&&SMTP_FROM?nodemailer.createTransport({host:SMTP_HOST,port:SMTP_PORT,secure:SMTP_PORT===465,auth:{user:SMTP_USER,pass:SMTP_PASS}}):null;
-const TERMS_VERSION='2026-11-01';
+const TERMS_VERSION='2026-11-04';
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:prod?{rejectUnauthorized:false}:false});
 const q=(s,p)=>pool.query(s,p),hex=e=>Buffer.from(e).toString('hex');
 const app=express();app.set('trust proxy',1);app.use(express.json({limit:'1mb'}),cp());
 const up=multer({storage:multer.memoryStorage(),limits:{fileSize:3e6}});
 const videoUp=multer({storage:multer.memoryStorage(),limits:{fileSize:20*1024*1024}});
-const sign=(res,e)=>res.cookie('t',jwt.sign({e},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
+const sign=(res,e,u)=>res.cookie('t',jwt.sign({e,v:u?.authVersion||0},SECRET,{expiresIn:'30d'}),{httpOnly:true,sameSite:'lax',secure:prod,maxAge:2592e6});
 const pub=u=>({email:u.email,name:u.name,phone:u.phone,role:u.role,avatarId:u.avatarId||''}),adm=u=>u&&u.role==='admin';
+const imageSignatures={
+ 'image/jpeg':buffer=>buffer.length>=3&&buffer[0]===0xff&&buffer[1]===0xd8&&buffer[2]===0xff,
+ 'image/png':buffer=>buffer.length>=8&&buffer.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])),
+ 'image/webp':buffer=>buffer.length>=12&&buffer.toString('ascii',0,4)==='RIFF'&&buffer.toString('ascii',8,12)==='WEBP',
+ 'image/gif':buffer=>buffer.length>=6&&['GIF87a','GIF89a'].includes(buffer.toString('ascii',0,6))
+};
+const safeImage=file=>file&&imageSignatures[file.mimetype]?.(file.buffer)===true;
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
 const otpHash=code=>crypto.createHmac('sha256',SECRET).update(code).digest('hex');
-app.use(async(req,res,next)=>{try{req.u=await getUser(jwt.verify(req.cookies.t,SECRET).e)||null}catch{req.u=null}next()});
-
-app.post('/api/signup/send-code',async(req,res)=>{
- const e=norm(req.body.email);
- if(!validEmail(e))return res.status(400).json({error:'Enter a valid email address.'});
- if((await q("select 1 from docs where coll='users' and (lower(data->>'email')=$1 or lower(data->>'recoveryEmail')=$1) limit 1",[e])).rowCount)return res.status(409).json({error:'This email is already in use by an account.'});
- if(!mail)return res.status(503).json({error:'Email verification is not configured. Contact the site administrator.'});
- const code=String(crypto.randomInt(0,1000000)).padStart(6,'0'),c=await pool.connect();
- try{
-  await c.query('begin');
-  await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
-  if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
-   await c.query('rollback');return res.status(409).json({error:'This email is already in use by an account.'});
-  }
-  const prev=(await c.query('select sent_at from signup_otps where email=$1',[e])).rows[0];
-  if(prev&&Date.now()-new Date(prev.sent_at).getTime()<60000){
-   await c.query('rollback');return res.status(429).json({error:'Please wait a minute before requesting another code.'});
-  }
-  await mail.sendMail({
-   from:SMTP_FROM,to:e,subject:'Verify your Yangu email address',
-   text:`Your Yangu verification code is ${code}. It expires in 10 minutes.`,
-   html:`<p>Your Yangu verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`
-  });
-  await c.query(`insert into signup_otps(email,code_hash,link_token_hash,verified_at,expires_at,sent_at,attempts)
-   values($1,$2,null,null,now()+interval '10 minutes',now(),0)
-   on conflict(email) do update set code_hash=excluded.code_hash,link_token_hash=null,verified_at=null,expires_at=excluded.expires_at,sent_at=excluded.sent_at,attempts=0`,
-   [e,otpHash(code)]);
-  await c.query('commit');res.json({ok:true});
- }catch(x){await c.query('rollback');console.error(x);res.status(503).json({error:'Could not send a verification code. Check the email address or try again later.'})}
- finally{c.release()}});
-
-app.post('/api/signup/verify-link',async(req,res)=>{
- const token=String(req.body.token||'');
- if(!/^[A-Za-z0-9_-]{40,50}$/.test(token))return res.status(400).json({error:'This verification link is invalid or expired. Request a new code.'});
- const c=await pool.connect();
- try{
-  await c.query('begin');
-  const verification=(await c.query('select email,expires_at from signup_otps where link_token_hash=$1 for update',[otpHash(token)])).rows[0];
-  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
-   await c.query('rollback');return res.status(400).json({error:'This verification link is invalid or expired. Request a new code.'});
-  }
-  if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(verification.email),verification.email])).rowCount){
-   await c.query('delete from signup_otps where email=$1',[verification.email]);await c.query('commit');
-   return res.status(409).json({error:'This email is already in use by an account.'});
-  }
-  await c.query('update signup_otps set verified_at=now() where email=$1',[verification.email]);
-  await c.query('commit');res.json({ok:true,email:verification.email});
- }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Could not verify the email link.'})}
- finally{c.release()}});
-
-app.post('/api/signup/verify-code',async(req,res)=>{
- const e=norm(req.body.email),code=String(req.body.code||'').trim();
- if(!validEmail(e)||!/^\d{6}$/.test(code))return res.status(400).json({error:'Enter your email and the six-digit verification code.'});
- const c=await pool.connect();
- try{
-  await c.query('begin');
-  const verification=(await c.query('select code_hash,expires_at,attempts from signup_otps where email=$1 for update',[e])).rows[0];
-  if(!verification||new Date(verification.expires_at).getTime()<=Date.now()){
-   await c.query('rollback');return res.status(400).json({error:'This verification code is invalid or expired. Request a new code.'});
-  }
-  if(verification.attempts>=5){
-   await c.query('rollback');return res.status(429).json({error:'Too many incorrect attempts. Request a new verification code.'});
-  }
-  const supplied=Buffer.from(otpHash(code),'hex'),expected=Buffer.from(verification.code_hash,'hex');
-  if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected)){
-   await c.query('update signup_otps set attempts=attempts+1 where email=$1',[e]);
-   await c.query('commit');return res.status(400).json({error:'That verification code is incorrect.'});
-  }
-  await c.query('update signup_otps set verified_at=now() where email=$1',[e]);
-  await c.query('commit');res.json({ok:true,email:e});
- }catch(err){await c.query('rollback');console.error(err);res.status(500).json({error:'Could not verify the email code.'})}
- finally{c.release()}});
+const updatePassword=async(e,hash)=>q(`update docs set data=jsonb_set(
+ jsonb_set(data,'{hash}',to_jsonb($1::text),true),
+ '{authVersion}',to_jsonb(coalesce(nullif(data->>'authVersion','')::int,0)+1),true)
+ where coll='users' and id=$2`,[hash,hex(e)]);
+app.use((req,res,next)=>{
+ res.set('X-Content-Type-Options','nosniff').set('X-Frame-Options','DENY').set('Referrer-Policy','strict-origin-when-cross-origin')
+  .set('Permissions-Policy','geolocation=(self)');
+ if(prod)res.set('Strict-Transport-Security','max-age=31536000; includeSubDomains');
+ next();
+});
+app.use(async(req,res,next)=>{try{
+ const token=jwt.verify(req.cookies.t,SECRET),user=await getUser(token.e);
+ req.u=user&&Number(token.v||0)===Number(user.authVersion||0)?user:null;
+}catch{req.u=null}next()});
 
 app.post('/api/signup',async(req,res)=>{
  const{name,email,phone,password,q:qn,qa,termsAccepted,termsVersion}=req.body,e=norm(email);
@@ -105,28 +54,19 @@ app.post('/api/signup',async(req,res)=>{
  const c=await pool.connect();
  try{
   await c.query('begin');
-  await c.query("select pg_advisory_xact_lock(hashtext('yangu-admin-accounts')::bigint)");
   await c.query('select pg_advisory_xact_lock(hashtext($1)::bigint)',[e]);
-  const verification=(await c.query('select verified_at,expires_at from signup_otps where email=$1 for update',[e])).rows[0];
-  if(!verification||!verification.verified_at||new Date(verification.expires_at).getTime()<=Date.now()){
-   await c.query('rollback');return res.status(400).json({error:'Verify your email address before creating an account.'});
-  }
   if((await c.query("select 1 from docs where coll='users' and (id=$1 or lower(data->>'recoveryEmail')=$2) limit 1",[hex(e),e])).rowCount){
    await c.query('commit');
    return res.status(409).json({error:'This email is already in use by an account.'});
   }
-  const slots=(await c.query('select slot from admin_slots')).rows.map(row=>row.slot),adminSlot=[1,2].find(slot=>!slots.includes(slot));
-  const role=adminSlot?'admin':'seller';
-  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:true,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role,created:Date.now()}]);
+  const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:'seller',created:Date.now()}]);
   if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
-  if(adminSlot)await c.query('insert into admin_slots(slot,user_id) values($1,$2)',[adminSlot,hex(e)]);
-  await c.query('delete from signup_otps where email=$1',[e]);
-  await c.query('commit');sign(res,e);res.json(pub(await getUser(e)));
+  await c.query('commit');const user=await getUser(e);sign(res,e,user);res.json(pub(user));
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 app.post('/api/login',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e);
  if(!u)return res.status(404).json({error:'No account with that email.'});
  if(!await bcrypt.compare(String(req.body.password||''),u.hash))return res.status(401).json({error:'Wrong password.'});
- sign(res,e);res.json(pub(u))});
+ sign(res,e,u);res.json(pub(u))});
 app.post('/api/logout',(req,res)=>{res.clearCookie('t');res.json({ok:1})});
 app.get('/api/me',(req,res)=>res.json(req.u?pub(req.u):null));
 app.post('/api/ai-assist',async(req,res)=>{
@@ -230,7 +170,7 @@ app.post('/api/profile/recovery-email/remove',async(req,res)=>{
 });
 app.post('/api/profile/photo',up.single('file'),async(req,res)=>{
  if(!req.u)return res.sendStatus(401);
- if(!req.file||!['image/jpeg','image/png','image/webp','image/gif'].includes(req.file.mimetype))return res.status(400).json({error:'Choose a JPEG, PNG, WebP or GIF image.'});
+ if(!safeImage(req.file))return res.status(415).json({error:'Choose a valid JPEG, PNG, WebP or GIF image.'});
  const id=crypto.randomBytes(16).toString('hex');
  const c=await pool.connect();
  try{
@@ -257,10 +197,16 @@ app.delete('/api/profile/photo',async(req,res)=>{
 app.post('/api/forgot',async(req,res)=>{const u=await getUser(norm(req.body.email));if(!u)return res.status(404).json({error:'No account with that email.'});res.json({q:u.q})});
 app.post('/api/reset',async(req,res)=>{const e=norm(req.body.email),u=await getUser(e),pw=String(req.body.password||'');
  if(!u||pw.length<6)return res.status(400).json({error:'Password must be 6+ characters.'});
+ if(adm(u))return res.status(403).json({error:'Administrator passwords must be reset by another administrator.'});
  if(!await bcrypt.compare(String(req.body.qa||'').toLowerCase().trim(),u.qah))return res.status(401).json({error:'Wrong answer.'});
- await q("update docs set data=data||$1 where coll='users' and id=$2",[{hash:await bcrypt.hash(pw,10)},hex(e)]);res.json({ok:1})});
-app.post('/api/admin/reset',async(req,res)=>{if(!adm(req.u))return res.sendStatus(403);const e=norm(req.body.email),temp='Yangu'+crypto.randomInt(1000,10000);
- await q("update docs set data=data||$1 where coll='users' and id=$2",[{hash:await bcrypt.hash(temp,10)},hex(e)]);res.json({temp})});
+ await updatePassword(e,await bcrypt.hash(pw,10));res.json({ok:1})});
+app.post('/api/admin/reset',async(req,res)=>{
+ if(!adm(req.u))return res.sendStatus(403);
+ const e=norm(req.body.email),temp=crypto.randomBytes(24).toString('base64url'),hash=await bcrypt.hash(temp,10);
+ const result=await updatePassword(e,hash);
+ if(!result.rowCount)return res.status(404).json({error:'No account with that email.'});
+ res.json({temp})
+});
 
 const COLL=['products','comments','site','users','ads'],strip=({hash,qah,q,recoveryEmail,recoveryPhone,...r})=>r,publicAd=d=>({...d,hasVideo:!!d.videoId,videoId:undefined});
 app.use('/api/c/:c',(req,res,next)=>COLL.includes(req.params.c)?next():res.sendStatus(404));
@@ -311,10 +257,10 @@ app.post('/api/upload-video',async(req,res,next)=>{if(!adm(req.u))return res.sen
  if(!isMp4&&!isWebm)return res.status(415).json({error:'Only valid MP4 or WebM videos are supported.'});
  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,file.mimetype,file.buffer]);res.json({id});
 });
-app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u||!req.file||!/^image\//.test(req.file.mimetype))return res.sendStatus(400);
+app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u)return res.sendStatus(401);if(!safeImage(req.file))return res.status(415).json({error:'Choose a valid JPEG, PNG, WebP or GIF image.'});
  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);res.json({id})});
 app.get('/_blob/:id',async(req,res)=>{const r=(await q('select mime,data from files where id=$1',[req.params.id.replace(/\W/g,'')])).rows[0];
- if(!r||r.mime.startsWith('video/'))return res.sendStatus(404);res.type(r.mime).set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
+ if(!r||!imageSignatures[r.mime]?.(r.data))return res.sendStatus(404);res.type(r.mime).set('X-Content-Type-Options','nosniff').set('Cache-Control','public,max-age=31536000,immutable').send(r.data)});
 app.use(express.static(path.join(__dirname,'public')));
 async function initializeAdmins(){
  const c=await pool.connect();
@@ -331,8 +277,7 @@ async function initializeAdmins(){
   await c.query('commit');
  }catch(err){await c.query('rollback');throw err}finally{c.release()}
 }
-q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea);create table if not exists signup_otps(email text primary key,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)')
- .then(()=>q('alter table signup_otps add column if not exists link_token_hash text, add column if not exists verified_at timestamptz'))
+q('create table if not exists docs(coll text,id text,data jsonb not null,primary key(coll,id));create table if not exists files(id text primary key,mime text,data bytea)')
  .then(()=>q('create table if not exists profile_email_otps(account_id text primary key,target_email text not null,code_hash text not null,expires_at timestamptz not null,sent_at timestamptz not null,attempts integer not null default 0)'))
  .then(()=>q('create table if not exists admin_slots(slot smallint primary key check(slot in (1,2)),user_id text not null unique)'))
  .then(initializeAdmins)
