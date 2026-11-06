@@ -183,11 +183,23 @@ const maybeShowAdPopup=()=>{
  adNextPopupAt=now+AD_POPUP_INTERVAL;
  scheduleAdPopup(AD_POPUP_INTERVAL);
  const videoSrc=ad.videoId||ad.hasVideo?`/api/ads/${encodeURIComponent(ad.id)}/video`:ad.videoUrl;
- modal(`<section class="ad-popup-content" data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle">${videoSrc?`<button class="ad-popup-mute" id="adMuteButton" type="button" data-act="toggleAdMute" aria-label="Unmute video" title="Unmute">${adMuteIcon(true)}</button>`:''}<button class="ad-popup-close" type="button" data-act="close" aria-label="Close advertisement" title="Close advertisement">×</button><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" autoplay muted playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status" hidden></p>`:''}${ad.linkUrl?`<div class="row"><a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Visit sponsor</a></div>`:''}</section>`);
+ modal(`<section class="ad-popup-content" data-ad-popup data-sponsor-url="${esc(ad.linkUrl||'')}" role="dialog" aria-modal="true" aria-labelledby="adPopupTitle">${videoSrc?`<button class="ad-popup-mute" id="adMuteButton" type="button" data-act="toggleAdMute" aria-label="Unmute video" title="Unmute">${adMuteIcon(true)}</button>`:''}<button class="ad-popup-close" type="button" data-act="close" aria-label="Close advertisement" title="Close advertisement">×</button><span class="eyebrow">Sponsored</span><h2 id="adPopupTitle">${esc(ad.title)}</h2>${ad.description?`<p>${esc(ad.description)}</p>`:''}${videoSrc?`<video class="ad-popup-video" autoplay muted controls playsinline preload="auto" src="${esc(videoSrc)}">Your browser does not support video playback.</video><p id="adVideoStatus" class="mu" role="status" hidden></p><button id="adVideoPlay" class="p" type="button" data-act="playAdVideo" hidden>Play video</button>`:''}${ad.linkUrl?`<div class="row"><a class="btn p" href="${esc(ad.linkUrl)}" target="_blank" rel="noopener noreferrer">Visit sponsor site</a></div>`:''}</section>`);
  $('#mb').style.maxWidth='760px';
  $('#mb .ad-popup-close').focus();
  const video=$('#mb video');
- if(video){video.muted=true;video.play().catch(()=>{const status=$('#adVideoStatus');if(status){status.hidden=false;status.textContent='Automatic playback is unavailable. Close the ad to visit the sponsor.'}})}
+ if(video){
+  video.muted=true;video.defaultMuted=true;video.autoplay=true;video.playsInline=true;
+  video.setAttribute('muted','');video.setAttribute('autoplay','');video.setAttribute('playsinline','');
+  video.addEventListener('error',()=>{const status=$('#adVideoStatus');if(status){status.hidden=false;status.textContent='The video could not be loaded. Check that the link points directly to a supported MP4 or WebM video.'}});
+  const startVideo=()=>video.play().then(()=>{const status=$('#adVideoStatus'),play=$('#adVideoPlay');if(status)status.hidden=true;if(play)play.hidden=true}).catch(()=>{
+   const status=$('#adVideoStatus'),play=$('#adVideoPlay');
+   if(status){status.hidden=false;status.textContent='Your browser blocked automatic playback. Use the video controls or select Play video.'}
+   if(play)play.hidden=false
+  });
+  video.addEventListener('canplay',()=>{if(video.paused)startVideo()},{once:true});
+  video.load();
+  requestAnimationFrame(()=>startVideo());
+ }
 };
 const wa=n=>{n=String(n||'').replace(/\D/g,'');return n.startsWith('0')?'254'+n.slice(1):n};
 const modal=h=>{$('#mb').style.maxWidth='';$('#mb').innerHTML=h;$('#md').classList.add('on')},closeM=()=>{
@@ -270,9 +282,9 @@ const prodForm=p=>{
 const showAdForm=ad=>modal(`<h3>${ad?'Edit ad':'Create ad'}</h3>
  <label>Title</label><input id="adTitle" maxlength="100" value="${esc(ad?.title)}">
  <label>Description (optional)</label><textarea id="adDescription" maxlength="300" rows="3">${esc(ad?.description)}</textarea>
- <label>Destination link (optional; HTTPS only)</label><input id="adLink" type="url" placeholder="https://example.com" value="${esc(ad?.linkUrl)}">
- <label>Video (optional)</label><select id="adVideoType"><option value="none">No video</option><option value="url" ${ad?.videoUrl?'selected':''}>Hosted HTTPS video URL</option><option value="upload" ${ad?.videoId?'selected':''}>Upload a video file</option></select>
- <div id="adVideoUrlWrap" ${ad?.videoUrl?'':'hidden'}><label>Video URL (MP4 or WebM)</label><input id="adVideoUrl" type="url" placeholder="https://example.com/video.mp4" value="${esc(ad?.videoUrl)}"></div>
+ <label>Destination link (optional; HTTPS only)</label><input id="adLink" type="url" placeholder="https://example.com" value="${esc(ad?.linkUrl)}"><p class="mu">This is separate from the video. Add both to show the video and a link visitors can use to visit the sponsor.</p>
+ <label>Video (optional)</label><select id="adVideoType"><option value="none">No video</option><option value="url" ${ad?.videoUrl?'selected':''}>Import from a direct video link</option><option value="upload" ${ad?.videoId?'selected':''}>Upload a video file</option></select>
+ <div id="adVideoUrlWrap" ${ad?.videoUrl?'':'hidden'}><label>Direct video-file link (MP4 or WebM)</label><input id="adVideoUrl" type="url" placeholder="https://example.com/video.mp4" value="${esc(ad?.videoUrl)}"><p class="mu">Yangu downloads and verifies the linked file, then plays it from the same secure storage as uploaded videos. The link must be public and the video must be 20 MB or smaller.</p></div>
  <div id="adVideoFileWrap" ${ad?.videoId?'':'hidden'}><label>Upload MP4/WebM video (max 20 MB)</label><input id="adVideoFile" type="file" accept="video/mp4,video/webm">${ad?.videoId?`<video controls playsinline preload="metadata" style="display:block;width:100%;max-height:180px;background:#000;border-radius:8px;margin-top:8px" src="/api/ads/${encodeURIComponent(ad.id)}/video">Current uploaded video</video><p class="mu">Choose another file to replace this video.</p>`:'<p class="mu">Uploaded videos are limited to 20 MB.</p>'}</div>
  <label class="row" style="align-items:center"><input id="adActive" type="checkbox" style="width:auto;margin:0" ${ad?.active?'checked':''}> Approve and publish this ad</label>
  <div class="er" id="er" role="status"></div><div class="row"><button class="p" data-act="saveAd" data-id="${esc(ad?.id||'')}">Save ad</button><button data-act="close">Cancel</button></div>`);
@@ -280,7 +292,7 @@ const setMe=u=>{me=u;try{u?localStorage.setItem('ym_e',u.email):localStorage.rem
 let zIds=[],zI=0;
 const showZ=()=>{modal(`<div style="text-align:center"><img src="/_blob/${esc(zIds[zI])}" style="max-width:100%;max-height:70vh;object-fit:contain" alt=""><div class="row" style="justify-content:center;align-items:center">${zIds.length>1?`<button data-act="zprev">‹</button><span class="mu">${zI+1} / ${zIds.length}</span><button data-act="znext">›</button>`:''}<button data-act="close">Close</button></div></div>`);$('#mb').style.maxWidth='900px'};
 const A={
- home(){view='home';q='';cat='';sub='';render();maybeShowAdPopup()},close:closeM,toggleAdMute(t){const video=$('#mb [data-ad-popup] video');if(!video)return;video.muted=!video.muted;t.innerHTML=adMuteIcon(video.muted);t.title=video.muted?'Unmute':'Mute';t.setAttribute('aria-label',video.muted?'Unmute video':'Mute video')},login:()=>authForm('login'),signup:()=>authForm('signup'),
+ home(){view='home';q='';cat='';sub='';render();maybeShowAdPopup()},close:closeM,toggleAdMute(t){const video=$('#mb [data-ad-popup] video');if(!video)return;video.muted=!video.muted;t.innerHTML=adMuteIcon(video.muted);t.title=video.muted?'Unmute':'Mute';t.setAttribute('aria-label',video.muted?'Unmute video':'Mute video')},playAdVideo(){const video=$('#mb [data-ad-popup] video'),status=$('#adVideoStatus'),play=$('#adVideoPlay');if(!video)return;video.play().then(()=>{if(status)status.hidden=true;if(play)play.hidden=true}).catch(()=>{if(status){status.hidden=false;status.textContent='The video could not be played. Use the video controls or check that the link is a direct MP4 or WebM file.'}})},login:()=>authForm('login'),signup:()=>authForm('signup'),
  toggleMenu(t){const m=$('#serviceMenu'),open=m.hidden;m.hidden=!open;t.setAttribute('aria-expanded',String(open))},
  findNearby(t){
   if(!navigator.geolocation){buyerLocationMessage='Location is not supported by this browser.';render();return}
@@ -338,6 +350,12 @@ const A={
    videoUrl=val('adVideoUrl');
    if(videoUrl&&!/^https:\/\//i.test(videoUrl))return setErr('Video URLs must use HTTPS.');
    if(!videoUrl)return setErr('Enter a hosted video URL or choose another video option.');
+   setErr('Downloading and checking the linked video…');
+   try{
+    const response=await fetch('/api/import-video',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:videoUrl})}),data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Could not import the linked video.');
+    videoId=data.id;videoUrl='';
+   }catch(error){setErr(error.message||'Could not import the linked video.');return}
   }else if(videoType==='upload'){
    const file=$('#adVideoFile').files[0],existing=ads.find(item=>item.id===id);
    if(file){
