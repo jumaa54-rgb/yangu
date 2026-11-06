@@ -1,6 +1,7 @@
 const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
 const norm=e=>String(e||'').trim().toLowerCase();
+const htmlEscape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const ANTHROPIC_API_KEY=process.env.ANTHROPIC_API_KEY,ANTHROPIC_MODEL=process.env.ANTHROPIC_MODEL||'claude-haiku-5-5';
 const validEmail=value=>{
  if(typeof value!=='string'||value.length>254)return false;
@@ -93,7 +94,21 @@ app.post('/api/signup',async(req,res)=>{
   }
   const ins=await c.query("insert into docs values('users',$1,$2) on conflict do nothing returning 1",[hex(e),{email:e,emailVerified:false,termsAcceptedAt:new Date().toISOString(),termsVersion:TERMS_VERSION,name:String(name).slice(0,80),phone:String(phone).slice(0,30),hash:await bcrypt.hash(String(password),10),q:qn,qah:await bcrypt.hash(String(qa).toLowerCase().trim(),10),role:'seller',created:Date.now()}]);
   if(!ins.rowCount){await c.query('commit');return res.status(409).json({error:'This email already has an account. Please log in.'})}
-  await c.query('commit');const user=await getUser(e);sign(res,e,user);res.json(pub(user));
+  await c.query('commit');
+  const user=await getUser(e);sign(res,e,user);
+  let welcomeEmailSent=false;
+  if(mail){
+   const siteUrl=process.env.PUBLIC_URL||'https://yangu-market-stores.onrender.com',name=String(user.name||'there'),safeName=htmlEscape(name);
+   try{
+    await mail.sendMail({
+     from:SMTP_FROM,to:e,subject:'Welcome to Yangu Market Stores',
+     text:`Hello ${name},\n\nWelcome to Yangu Market Stores, and thank you for joining us!\n\nYou can now explore goods from local sellers, connect directly with buyers and sellers, or list products of your own.\n\nVisit us at ${siteUrl}\n\nThank you for being part of Yangu Market Stores.`,
+     html:`<div style="font-family:Arial,sans-serif;line-height:1.6;color:#20242a;max-width:600px;margin:auto"><h1 style="color:#176b4d">Welcome to Yangu Market Stores!</h1><p>Hello ${safeName},</p><p>Thank you for joining us. We are glad to have you in our community.</p><p>Explore goods from local sellers, connect directly with buyers and sellers, or list products of your own.</p><p><a href="${htmlEscape(siteUrl)}" style="display:inline-block;background:#176b4d;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none">Visit Yangu Market Stores</a></p><p>Thank you for being part of Yangu Market Stores.</p></div>`
+    });
+    welcomeEmailSent=true;
+   }catch(error){console.error('Welcome email could not be sent:',error.name||'Error')}
+  }
+  res.json({...pub(user),welcomeEmailSent});
  }catch(x){await c.query('rollback');console.error(x);res.status(500).json({error:'Server error'})}finally{c.release()}});
 const adminMfaCookie={httpOnly:true,sameSite:'strict',secure:prod,maxAge:5*60*1000,path:'/api/admin/mfa'};
 const clearAdminMfaCookie=res=>res.clearCookie('admin_mfa_challenge',{path:adminMfaCookie.path});

@@ -15,6 +15,7 @@ A.dosignup=async()=>{
  let r;try{r=await J('/api/signup',data)}catch{const e=$('#er');if(e)e.innerHTML=`Could not create the account. Try again. ${supportLinks()}`;return}
  if(!r.ok){const e=$('#er');if(e)e.innerHTML=`${esc(r.d.error||'Could not create the account.')} ${supportLinks()}`;return}
  afterAuth(r);
+ modal(`<h3>Welcome to Yangu Market Stores!</h3><p>Thank you for joining us. Your account is ready.</p><p class="mu">${r.d.welcomeEmailSent?'A welcome message has been sent to '+esc(data.email)+'.':'We could not send a welcome email right now. You can still use your account; please contact support if you need help.'}</p><div class="row"><button class="p" data-act="close">Continue</button></div>`);
 };
 document.addEventListener('input',e=>{
  if(e.target.id!=='e')return;
