@@ -1,4 +1,4 @@
-const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer');
+const express=require('express'),{Pool}=require('pg'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken'),cp=require('cookie-parser'),multer=require('multer'),path=require('path'),crypto=require('crypto'),nodemailer=require('nodemailer'),https=require('https'),dns=require('dns').promises,net=require('net');
 const SECRET=process.env.JWT_SECRET;if(!SECRET)throw new Error('Set JWT_SECRET');
 const norm=e=>String(e||'').trim().toLowerCase();
 const htmlEscape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -30,6 +30,54 @@ const imageSignatures={
  'image/gif':buffer=>buffer.length>=6&&['GIF87a','GIF89a'].includes(buffer.toString('ascii',0,6))
 };
 const safeImage=file=>file&&imageSignatures[file.mimetype]?.(file.buffer)===true;
+const isPublicIPv4=address=>{
+ const [a,b,c]=address.split('.').map(Number);
+ return !(a===0||a===10||a===127||a>=224||(a===100&&b>=64&&b<=127)||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||
+  (a===192&&(b===0||b===168||b===88&&c===99))||(a===198&&(b===18||b===19||b===51&&c===100))||(a===203&&b===0&&c===113));
+};
+const safeVideoLookup=(hostname,options,callback)=>{
+ dns.lookup(hostname,{all:true,verbatim:true}).then(addresses=>{
+  const resolved=addresses.find(item=>net.isIP(item.address)===4&&isPublicIPv4(item.address));
+  if(!resolved)return callback(new Error('The video host must resolve to a public IPv4 address.'));
+  callback(null,options?.all?[resolved]:resolved.address,options?.all?undefined:4);
+ }).catch(callback)
+};
+const fetchLinkedVideo=async(value,redirects=0)=>{
+ let url;try{url=new URL(value)}catch{throw new Error('Enter a valid direct video URL.')}
+ if(url.protocol!=='https:'||url.username||url.password||url.port&&url.port!=='443'||net.isIP(url.hostname))throw new Error('Video links must use a public HTTPS host on the standard port.');
+ if(redirects>4)throw new Error('The video link redirected too many times.');
+ const result=await new Promise((resolve,reject)=>{
+  const request=https.get(url,{lookup:safeVideoLookup,headers:{'user-agent':'Yangu-Market-Video-Importer/1.0'},timeout:20000},response=>{
+   if([301,302,303,307,308].includes(response.statusCode)){
+    const location=response.headers.location;response.resume();
+    if(!location)return reject(new Error('The video host returned an invalid redirect.'));
+    let redirected;try{redirected=new URL(location,url).toString()}catch{return reject(new Error('The video host returned an invalid redirect.'))}
+    return resolve({redirected})
+   }
+   if(response.statusCode!==200){response.resume();return reject(new Error('The video host did not return a playable video.'))}
+   const type=String(response.headers['content-type']||'').split(';')[0].trim().toLowerCase();
+   if(type&&!['video/mp4','video/webm','application/octet-stream','binary/octet-stream'].includes(type)){response.resume();return reject(new Error('The link must point directly to an MP4 or WebM video file.'))}
+   const length=Number(response.headers['content-length']||0);
+   if(length>20*1024*1024){response.resume();return reject(new Error('Linked videos must be 20 MB or smaller.'))}
+   const chunks=[];let size=0;
+   response.on('data',chunk=>{
+    size+=chunk.length;
+    if(size>20*1024*1024){request.destroy(new Error('Linked videos must be 20 MB or smaller.'));return}
+    chunks.push(chunk)
+   });
+   response.on('end',()=>resolve({data:Buffer.concat(chunks),type}));
+   response.on('error',reject)
+  });
+  request.setTimeout(20000,()=>request.destroy(new Error('The video host took too long to respond.')));
+  request.on('error',reject)
+ });
+ if(result.redirected)return fetchLinkedVideo(result.redirected,redirects+1);
+ const mime=result.data.subarray(4,8).toString()==='ftyp'?'video/mp4':
+  result.data.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]))?'video/webm':'';
+ if(!mime||result.type&&result.type!=='application/octet-stream'&&result.type!=='binary/octet-stream'&&result.type!==mime)
+  throw new Error('The link did not contain a valid MP4 or WebM video file.');
+ return{mime,data:result.data}
+};
 const getUser=async e=>(await q("select data from docs where coll='users' and id=$1",[hex(e)])).rows[0]?.data;
 const otpHash=code=>crypto.createHmac('sha256',SECRET).update(code).digest('hex');
 const encodeBase32=buffer=>{
@@ -366,7 +414,14 @@ app.get('/api/ads/:id/video',async(req,res)=>{const ad=(await q("select data fro
  if(!ad||(!adm(req.u)&&(!ad.approved||!ad.active))||!ad.videoId)return res.sendStatus(404);
  const file=(await q('select mime,data from files where id=$1',[ad.videoId])).rows[0];
  if(!file||!['video/mp4','video/webm'].includes(file.mime))return res.sendStatus(404);
- res.type(file.mime).set('Cache-Control','private,no-store').send(file.data)});
+ res.type(file.mime).set('Accept-Ranges','bytes').set('Cache-Control','private,no-store');
+ const range=req.range(file.data.length);
+ if(range===-1||range===-2)return res.status(416).set('Content-Range',`bytes */${file.data.length}`).end();
+ if(Array.isArray(range)){
+  const{start,end}=range[0];
+  return res.status(206).set('Content-Range',`bytes ${start}-${end}/${file.data.length}`).set('Content-Length',String(end-start+1)).send(file.data.subarray(start,end+1))
+ }
+ res.set('Content-Length',String(file.data.length)).send(file.data)});
 app.post('/api/upload-video',async(req,res,next)=>{if(!adm(req.u))return res.sendStatus(403);
  try{await new Promise((resolve,reject)=>videoUp.single('file')(req,res,err=>err?reject(err):resolve()))}
  catch(err){if(err.code==='LIMIT_FILE_SIZE')return res.status(413).json({error:'Videos must be 20 MB or smaller.'});return next(err)}
@@ -375,6 +430,23 @@ app.post('/api/upload-video',async(req,res,next)=>{if(!adm(req.u))return res.sen
  const isWebm=file.mimetype==='video/webm'&&file.buffer.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]));
  if(!isMp4&&!isWebm)return res.status(415).json({error:'Only valid MP4 or WebM videos are supported.'});
  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,file.mimetype,file.buffer]);res.json({id});
+});
+app.post('/api/import-video',async(req,res)=>{
+ if(!adm(req.u))return res.sendStatus(403);
+ try{
+  const {mime,data}=await fetchLinkedVideo(String(req.body?.url||''));
+  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,mime,data]);res.json({id});
+ }catch(error){
+  console.error('Linked ad video import failed:',error.name||'Error');
+  const knownMessages=[
+   'Enter a valid direct video URL.','Video links must use a public HTTPS host on the standard port.',
+   'The video link redirected too many times.','The video host returned an invalid redirect.',
+   'The video host did not return a playable video.','The link must point directly to an MP4 or WebM video file.',
+   'Linked videos must be 20 MB or smaller.','The video host took too long to respond.',
+   'The link did not contain a valid MP4 or WebM video file.'
+  ];
+  return res.status(400).json({error:knownMessages.includes(error.message)?error.message:'Could not download the video. Check that the link is public and try again.'})
+ }
 });
 app.post('/api/upload',up.single('file'),async(req,res)=>{if(!req.u)return res.sendStatus(401);if(!safeImage(req.file))return res.status(415).json({error:'Choose a valid JPEG, PNG, WebP or GIF image.'});
  const id=crypto.randomBytes(16).toString('hex');await q('insert into files values($1,$2,$3)',[id,req.file.mimetype,req.file.buffer]);res.json({id})});

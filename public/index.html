@@ -275,8 +275,8 @@ const showAdForm=ad=>modal(`<h3>${ad?'Edit ad':'Create ad'}</h3>
  <label>Title</label><input id="adTitle" maxlength="100" value="${esc(ad?.title)}">
  <label>Description (optional)</label><textarea id="adDescription" maxlength="300" rows="3">${esc(ad?.description)}</textarea>
  <label>Destination link (optional; HTTPS only)</label><input id="adLink" type="url" placeholder="https://example.com" value="${esc(ad?.linkUrl)}">
- <label>Video (optional)</label><select id="adVideoType"><option value="none">No video</option><option value="url" ${ad?.videoUrl?'selected':''}>Hosted HTTPS video URL</option><option value="upload" ${ad?.videoId?'selected':''}>Upload a video file</option></select>
- <div id="adVideoUrlWrap" ${ad?.videoUrl?'':'hidden'}><label>Video URL (MP4 or WebM)</label><input id="adVideoUrl" type="url" placeholder="https://example.com/video.mp4" value="${esc(ad?.videoUrl)}"></div>
+ <label>Video (optional)</label><select id="adVideoType"><option value="none">No video</option><option value="url" ${ad?.videoUrl?'selected':''}>Import from a direct video link</option><option value="upload" ${ad?.videoId?'selected':''}>Upload a video file</option></select>
+ <div id="adVideoUrlWrap" ${ad?.videoUrl?'':'hidden'}><label>Direct video-file link (MP4 or WebM)</label><input id="adVideoUrl" type="url" placeholder="https://example.com/video.mp4" value="${esc(ad?.videoUrl)}"><p class="mu">Yangu downloads and verifies the linked file, then plays it from the same secure storage as uploaded videos. The link must be public and the video must be 20 MB or smaller.</p></div>
  <div id="adVideoFileWrap" ${ad?.videoId?'':'hidden'}><label>Upload MP4/WebM video (max 20 MB)</label><input id="adVideoFile" type="file" accept="video/mp4,video/webm">${ad?.videoId?`<video controls playsinline preload="metadata" style="display:block;width:100%;max-height:180px;background:#000;border-radius:8px;margin-top:8px" src="/api/ads/${encodeURIComponent(ad.id)}/video">Current uploaded video</video><p class="mu">Choose another file to replace this video.</p>`:'<p class="mu">Uploaded videos are limited to 20 MB.</p>'}</div>
  <label class="row" style="align-items:center"><input id="adActive" type="checkbox" style="width:auto;margin:0" ${ad?.active?'checked':''}> Approve and publish this ad</label>
  <div class="er" id="er" role="status"></div><div class="row"><button class="p" data-act="saveAd" data-id="${esc(ad?.id||'')}">Save ad</button><button data-act="close">Cancel</button></div>`);
@@ -342,6 +342,12 @@ const A={
    videoUrl=val('adVideoUrl');
    if(videoUrl&&!/^https:\/\//i.test(videoUrl))return setErr('Video URLs must use HTTPS.');
    if(!videoUrl)return setErr('Enter a hosted video URL or choose another video option.');
+   setErr('Downloading and checking the linked video…');
+   try{
+    const response=await fetch('/api/import-video',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:videoUrl})}),data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Could not import the linked video.');
+    videoId=data.id;videoUrl='';
+   }catch(error){setErr(error.message||'Could not import the linked video.');return}
   }else if(videoType==='upload'){
    const file=$('#adVideoFile').files[0],existing=ads.find(item=>item.id===id);
    if(file){
